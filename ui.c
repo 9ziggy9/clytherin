@@ -1,10 +1,8 @@
 #include "ui.h"
+#include <ncurses.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-
-const char *master_toolbar_txt = "<esc | q: quit> <f1: new message>";
-const char *input_toolbar_txt = "<esc | f1: cancel> <enter: send>";
 
 void panic_null_win(WINDOW *w) {
   if (w == NULL) {
@@ -30,6 +28,25 @@ void init_colors(void) {
   init_pair(3, COLOR_CYAN, COLOR_BLACK);
   init_pair(4, COLOR_RED, COLOR_BLUE);
 }
+
+const char *master_toolbar_txt = "[ ESC : QUIT][ F1 : SEND]";
+const char *input_toolbar_txt  = "[ ESC : CANCEL][ ENTER : SEND]";
+
+const Keymap km_master = {
+  .total = 2,
+  .bindings = {
+    {.key = "ESC", .act = "QUIT"},
+    {.key = "F1",  .act = "SEND"}
+  }
+};
+
+const Keymap km_input = {
+  .total = 2,
+  .bindings = {
+    {.key = "ESC",   .act = "CANCEL"},
+    {.key = "ENTER", .act = "SEND"}
+  }
+};
 
 static void
 write_toolbar_repr(WINDOW *win, int end, const char *fmt, const char *repr)
@@ -169,8 +186,7 @@ WINDOW *create_input_box(int lines, int cols)
   int input_start_x = start_x + (width - cols) / 2;
 
   apply_border(lines, cols, input_start_y, input_start_x,
-               "message", input_toolbar_txt,
-               ACS_VLINE, ACS_HLINE);
+               "message", input_toolbar_txt, ACS_VLINE, ACS_HLINE);
 
   WINDOW *w_input = newwin(lines, cols, input_start_y, input_start_x);
   panic_null_win(w_input);

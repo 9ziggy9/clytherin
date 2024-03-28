@@ -6,6 +6,18 @@
 #define KEY_ESC 27
 #define KEY_DEL 127
 
+#define MAX_BINDINGS 12
+
+typedef struct {
+  const char *key;
+  const char *act;
+} Binding;
+
+typedef struct {
+  size_t total;
+  Binding bindings[12];
+} Keymap;
+
 void panic_null_win(WINDOW *);
 void exit_ncurses(WINDOW *);
 
@@ -23,8 +35,5 @@ void apply_border(int, int, int, int,
                   const chtype,   const chtype);
 
 void msg_post_to_feed(WINDOW *, const char *, int);
-
-extern const char *master_toolbar_txt;
-extern const char *input_toolbar_txt;
 
 #endif // UI_H
