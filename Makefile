@@ -19,22 +19,22 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-all: bin_dir interface test
+all: interface test
 
 test:
 	$(BIN_DIR)/interface $(TEST_TXT)
 
+interface: ui.o main.c
+	$(call print_in_color, $(BLUE), \nCOMPILING main.c\n)
+	$(CC) $(CFLAGS) main.c $(BIN_DIR)/ui.o -o $(BIN_DIR)/$@ -lncurses
+
+ui.o: bin_dir ui.c
+	$(call print_in_color, $(BLUE), \nGENERATING OBJ $@\n)
+	$(CC) $(CFLAGS) -c ui.c -o $(BIN_DIR)/$@ -lncurses
+
 bin_dir:
 	$(call print_in_color, $(GREEN), \nCreating bin dir: $(BIN_DIR)\n)
 	mkdir -p $(BIN_DIR)
-
-interface: ui.o main.c
-	$(call print_in_color, $(BLUE), \nCOMPILING main.c\n)
-	$(CC) $(CFLAGS) main.c -o $(BIN_DIR)/$@ -lncurses
-
-ui.o: ui.c
-	$(call print_in_color, $(BLUE), \nGENERATING OBJ $@\n)
-	$(CC) $(CFLAGS) -c ui.c -o $(BIN_DIR)/$@ -lncurses
 
 clean:
 	$(call print_in_color, $(GREEN), \nCleaning...\n)

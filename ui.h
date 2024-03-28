@@ -2,8 +2,6 @@
 #define UI_H
 
 #include <ncurses.h>
-/* #include <stdlib.h> */
-/* #include <string.h> */
 
 #define KEY_ESC 27
 #define KEY_DEL 127
