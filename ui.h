@@ -10,11 +10,12 @@ void panic_null_win(WINDOW *);
 void exit_ncurses(WINDOW *);
 
 void init_ncurses(void);
+void init_colors(void);
 void stdscr_border(void);
 
-WINDOW *create_master_win(int, int, int, int);
+WINDOW *create_master_win(void);
+WINDOW *create_input_box(int, int);
 
-WINDOW *create_input_box(int, int, int, int);
 void destroy_input_box(WINDOW *, WINDOW **);
 char *handle_input(WINDOW *);
 void apply_border(int, int, int, int,

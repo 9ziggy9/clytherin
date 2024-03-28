@@ -22,6 +22,29 @@ void init_ncurses(void) {
   set_escdelay(0); // immediate escape key response
 }
 
+void init_colors(void) {
+  assert(has_colors() && "Terminal does not support color.\n");
+  start_color();
+  init_pair(1, COLOR_YELLOW, COLOR_BLACK);
+  init_pair(2, COLOR_GREEN, COLOR_BLACK);
+  init_pair(3, COLOR_CYAN, COLOR_BLACK);
+  init_pair(4, COLOR_RED, COLOR_BLUE);
+}
+
+static void
+write_toolbar_repr(WINDOW *win, int end, const char *fmt, const char *repr)
+{
+  int last_line, last_col;
+  getmaxyx(win, last_line, last_col);
+  mvwprintw(win, last_line - 1, last_col - end, fmt, repr);
+}
+
+static void
+write_title_repr(WINDOW *win, const char *fmt, const char *title)
+{
+  mvwprintw(win, 0, 1, fmt, title);
+}
+
 void stdscr_border(void) {
   // stdscr border and tools bars
   int txt_end = (int) strlen(master_toolbar_txt) + 3;
@@ -31,8 +54,8 @@ void stdscr_border(void) {
   attroff(COLOR_PAIR(1));
 
   attron(A_BOLD);
-  mvprintw(LINES - 1, COLS - txt_end, " %s ", master_toolbar_txt);
-  mvprintw(0, 1, " %s ", "feed");
+  write_toolbar_repr(stdscr, txt_end, " %s ", master_toolbar_txt);
+  write_title_repr(stdscr, " %s ", "feed");
   attroff(A_BOLD);
 
   refresh();
@@ -84,7 +107,11 @@ void msg_post_to_feed(WINDOW *win, const char *txt, int id) {
   wattroff(win, COLOR_PAIR(1) | A_BOLD);
 }
 
-WINDOW *create_master_win(int height, int width, int start_y, int start_x) {
+WINDOW *create_master_win(void) {
+  int height  = getmaxy(stdscr) - 2;
+  int width   = getmaxx(stdscr) - 2;
+  int start_y = (LINES - height) / 2;
+  int start_x = (COLS - width) / 2;
   WINDOW *w_master = newwin(height, width, start_y, start_x);
   panic_null_win(w_master);
   keypad(w_master, TRUE);
@@ -121,31 +148,31 @@ void apply_border(int height, int width,
   box(w_border, sym_y, sym_x);
 
   int txt_end = (int) strlen(tool_txt) + 1;
-  mvwprintw(w_border, height + 1, width - txt_end, " %s ", tool_txt);
+  write_toolbar_repr(w_border, txt_end, " %s ", tool_txt);
 
   wattron(w_border, COLOR_PAIR(3) | A_BOLD | A_BLINK);
-  mvwprintw(w_border, 0, 1, " %s ", title);
+  write_title_repr(w_border, " %s ", title);
   wattroff(w_border, COLOR_PAIR(3) | A_BOLD | A_BLINK);
 
   wrefresh(w_border);
   delwin(w_border);
 }
 
-WINDOW *create_input_box(int height, int width, int start_y, int start_x)
+WINDOW *create_input_box(int lines, int cols)
 {
-  int input_height  = 6;
-  int input_width   = 50;
-  int input_start_y = start_y + (height - input_height) / 2;
-  int input_start_x = start_x + (width - input_width) / 2;
+  int height  = getmaxy(stdscr) - 2;
+  int width   = getmaxx(stdscr) - 2;
+  int start_y = (LINES - height) / 2;
+  int start_x = (COLS - width) / 2;
 
-  apply_border(input_height, input_width,
-               input_start_y, input_start_x,
+  int input_start_y = start_y + (height - lines) / 2;
+  int input_start_x = start_x + (width - cols) / 2;
+
+  apply_border(lines, cols, input_start_y, input_start_x,
                "message", input_toolbar_txt,
                ACS_VLINE, ACS_HLINE);
 
-
-  WINDOW *w_input   = newwin(input_height, input_width,
-                             input_start_y, input_start_x);
+  WINDOW *w_input = newwin(lines, cols, input_start_y, input_start_x);
   panic_null_win(w_input);
 
   keypad(w_input, TRUE);

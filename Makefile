@@ -19,12 +19,12 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-all: interface test
+all: main test
 
 test:
-	$(BIN_DIR)/interface $(TEST_TXT)
+	$(BIN_DIR)/main $(TEST_TXT)
 
-interface: ui.o main.c
+main: ui.o main.c
 	$(call print_in_color, $(BLUE), \nCOMPILING main.c\n)
 	$(CC) $(CFLAGS) main.c $(BIN_DIR)/ui.o -o $(BIN_DIR)/$@ -lncurses
 
