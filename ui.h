@@ -8,16 +8,6 @@
 
 #define MAX_BINDINGS 12
 
-typedef struct {
-  const char *key;
-  const char *act;
-} Binding;
-
-typedef struct {
-  size_t total;
-  Binding bindings[12];
-} Keymap;
-
 void panic_null_win(WINDOW *);
 void exit_ncurses(WINDOW *);
 
@@ -32,7 +22,7 @@ void destroy_input_box(WINDOW *, WINDOW **);
 char *handle_input(WINDOW *);
 void apply_border(int, int, int, int,
                   const char *, const char *,
-                  const chtype,   const chtype);
+                  const chtype, const chtype);
 
 void msg_post_to_feed(WINDOW *, const char *, int);
 

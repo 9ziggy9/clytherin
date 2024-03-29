@@ -29,24 +29,8 @@ void init_colors(void) {
   init_pair(4, COLOR_RED, COLOR_BLUE);
 }
 
-const char *master_toolbar_txt = "[ ESC : QUIT][ F1 : SEND]";
-const char *input_toolbar_txt  = "[ ESC : CANCEL][ ENTER : SEND]";
-
-const Keymap km_master = {
-  .total = 2,
-  .bindings = {
-    {.key = "ESC", .act = "QUIT"},
-    {.key = "F1",  .act = "SEND"}
-  }
-};
-
-const Keymap km_input = {
-  .total = 2,
-  .bindings = {
-    {.key = "ESC",   .act = "CANCEL"},
-    {.key = "ENTER", .act = "SEND"}
-  }
-};
+const char *master_toolbar_repr = "[ ESC >> QUIT ][ F1 >> SEND ]";
+const char *input_toolbar_repr  = "[ ESC >> CANCEL ][ ENTER >> SEND ]";
 
 static void
 write_toolbar_repr(WINDOW *win, int end, const char *fmt, const char *repr)
@@ -63,15 +47,14 @@ write_title_repr(WINDOW *win, const char *fmt, const char *title)
 }
 
 void stdscr_border(void) {
-  // stdscr border and tools bars
-  int txt_end = (int) strlen(master_toolbar_txt) + 3;
+  int txt_end = (int) strlen(master_toolbar_repr) + 3;
 
   attron(COLOR_PAIR(1));
   border(0,0,0,0,0,0,0,0);
   attroff(COLOR_PAIR(1));
 
   attron(A_BOLD);
-  write_toolbar_repr(stdscr, txt_end, " %s ", master_toolbar_txt);
+  write_toolbar_repr(stdscr, txt_end, "%s", master_toolbar_repr);
   write_title_repr(stdscr, " %s ", "feed");
   attroff(A_BOLD);
 
@@ -155,7 +138,7 @@ WINDOW *create_master_win(void) {
 void apply_border(int height, int width,
                   int start_y, int start_x,
                   const char *title,
-                  const char *tool_txt,
+                  const char *repr,
                   const chtype sym_y, const chtype sym_x)
 {
 
@@ -164,8 +147,8 @@ void apply_border(int height, int width,
 
   box(w_border, sym_y, sym_x);
 
-  int txt_end = (int) strlen(tool_txt) + 1;
-  write_toolbar_repr(w_border, txt_end, " %s ", tool_txt);
+  int txt_end = (int) strlen(repr) + 3;
+  write_toolbar_repr(w_border, txt_end, "%s", repr);
 
   wattron(w_border, COLOR_PAIR(3) | A_BOLD | A_BLINK);
   write_title_repr(w_border, " %s ", title);
@@ -185,8 +168,9 @@ WINDOW *create_input_box(int lines, int cols)
   int input_start_y = start_y + (height - lines) / 2;
   int input_start_x = start_x + (width - cols) / 2;
 
+
   apply_border(lines, cols, input_start_y, input_start_x,
-               "message", input_toolbar_txt, ACS_VLINE, ACS_HLINE);
+               "message", input_toolbar_repr, ACS_VLINE, ACS_HLINE);
 
   WINDOW *w_input = newwin(lines, cols, input_start_y, input_start_x);
   panic_null_win(w_input);
