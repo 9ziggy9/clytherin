@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define PORT_DEFAULT 9001
 #define MAX_CLIENTS 2
@@ -43,6 +45,8 @@ int main(int argc, char **argv) {
                      server_socket,
                      "failed to create socket.\n");
 
+  fcntl(server_socket, F_SETFL, O_NONBLOCK);
+
   server_addr_init(&server_addr, PORT);
 
   const int bind_result = bind(server_socket,
@@ -73,16 +77,21 @@ int main(int argc, char **argv) {
     int client_socket = accept(server_socket,
                               (struct sockaddr *) &client_addr,
                               &client_addr_len);
-    if (client_socket < 0 && RUN) {
-      perror("HOST :: rejected client_socket.\n");
-      continue;
+    if (client_socket < 0) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN) {
+        sleep(1); // this is a bit of a hack, look into self-piping
+        continue;
+      } else if (RUN) {
+        perror("HOST :: rejected client_socket.\n");
+        continue;
+      }
     }
 
     pthread_t thread = 0;
     if (resolve_client_connection(client_socket,
                                   &thread, client_addr) != 0 && RUN)
     {
-      fprintf(stderr, "HOST :: panic_on_fail(): failed to resolve client.\n");
+      fprintf(stderr, "HOST :: %s(): failed to resolve client.\n", __func__);
     }
   }
 
@@ -105,13 +114,16 @@ void add_thread(pthread_t thread) {
     CLIENT_THREAD_IDS[CLIENT_COUNT++] = thread;
     printf("Client thread successfully added.\n");
   } else {
-    fprintf(stderr, "add_thread(): maximum thread count met.\n");
+    fprintf(stderr, "%s(): maximum thread count met.\n", __func__);
   }
 }
 
 void join_all_threads(void) {
+  printf("%s(): cleaning up threads.\n", __func__);
   for (int i = 0; i < CLIENT_COUNT; i++) {
-    pthread_join(CLIENT_THREAD_IDS[i], NULL);
+    if (pthread_cancel(CLIENT_THREAD_IDS[i]) == 0) {
+      pthread_join(CLIENT_THREAD_IDS[i], NULL);
+    }
   }
   CLIENT_COUNT = 0;
 }
@@ -124,14 +136,15 @@ int resolve_client_connection(int client_socket,
   else {
     int *ptr_client_socket = malloc(sizeof(int));
     if (ptr_client_socket == NULL) {
-      fprintf(stderr, "resolve_client_connection(): malloc failure.\n");
+      fprintf(stderr, "%s(): malloc failure.\n", __func__);
       close(client_socket);
       return -1;
     } else {
       *ptr_client_socket = client_socket;
       int p = pthread_create(thread, NULL, handle_client, ptr_client_socket);
-      if (p == 0) add_thread(*thread);
-      else {
+      if (p == 0) {
+        add_thread(*thread); 
+      } else {
         close(client_socket);
         free(ptr_client_socket);
         return -1;
@@ -155,6 +168,7 @@ void *handle_client(void *arg) {
     buffer[bytes_read] = '\0'; // Null-terminate the received data
     printf("Received: %s", buffer);
   }
+
   close(client_socket);
   return NULL;
 }
