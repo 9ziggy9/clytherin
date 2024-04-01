@@ -12,6 +12,10 @@
 #include <errno.h>
 
 #define PORT_DEFAULT 9001
+
+/*
+In the future, a thread pool should be implemented.
+*/
 #define MAX_CLIENTS 2
 pthread_t CLIENT_THREAD_IDS[MAX_CLIENTS];
 int CLIENT_COUNT = 0;
@@ -143,6 +147,8 @@ void join_all_threads(void) {
   CLIENT_COUNT = 0;
 }
 
+const char *WELCOME_MSG = "Hello, welcome fren!\n";
+const char *CONN_REFUSED = "Connection to host refused!\n";
 int resolve_client_connection(int client_socket,
                               pthread_t *thread,
                               struct sockaddr_in client_addr)
@@ -151,6 +157,9 @@ int resolve_client_connection(int client_socket,
   if ((CLIENT_COUNT + 1 > MAX_CLIENTS)) {
     printf("%s(): rejected new client, at (%d) capacity.\n",
            __func__, MAX_CLIENTS);
+
+    send(client_socket, CONN_REFUSED, strlen(CONN_REFUSED), 0);
+    close(client_socket);
     return -1;
   };
 
@@ -171,15 +180,18 @@ int resolve_client_connection(int client_socket,
   add_client(*thread);
   printf("%s(): client connected --> %s\nTotal clients: %d\n",
          __func__, inet_ntoa(client_addr.sin_addr), CLIENT_COUNT);
+  send(*ptr_client_socket, WELCOME_MSG, strlen(WELCOME_MSG), 0);
   return 0;
 }
 
 void client_cleanup_handler(void *arg) {
   int client_socket = *((int *) arg);
+  printf("%s(): client (%d) exited\n", __func__, client_socket);
   printf("%s(): cleaning client socket %d\n", __func__, client_socket);
   fflush(stdout);
   close(client_socket);
   free(arg);
+  CLIENT_COUNT--;
 }
 
 void *handle_client(void *arg) {
