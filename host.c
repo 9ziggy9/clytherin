@@ -21,12 +21,19 @@ typedef struct {
   int *server_socket;
 } ThreadContext;
 
+/*
+Setting RUN as volatile sig_atomic_t ensures atomicity for int-sized read/write
+but does not prevent potential read-modify-write race conditions.
+For better thread synchronization, consider using mutexes or condition variables
+alongside the RUN flag.
+*/
 volatile sig_atomic_t RUN = 1;
+
 sigset_t init_sigset(void);
 void *handle_signal_thread(void *);
 
 void join_all_threads(void);
-void add_thread(pthread_t);
+void add_client(pthread_t);
 void *handle_client(void *);
 void host_panic_on_fail(bool, int, const char *);
 int resolve_client_connection(int, pthread_t *, struct sockaddr_in);
@@ -40,12 +47,18 @@ int main(int argc, char **argv) {
   struct sockaddr_in server_addr, client_addr;
   socklen_t client_addr_len = sizeof(client_addr);
 
+  // BEGIN: HOST SOCKET
   server_socket = socket(AF_INET, SOCK_STREAM, 0);
   host_panic_on_fail(server_socket < 0,
                      server_socket,
                      "failed to create socket.\n");
-
-  fcntl(server_socket, F_SETFL, O_NONBLOCK);
+  // TCP TIME_WAIT state may linger, this comes from TCP stack configuration
+  // of the operating system, setting SO_REUSEADDR is to mitigate busy port
+  // annoyances.
+  int optval = 1;
+  setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+  fcntl(server_socket, F_SETFL, O_NONBLOCK); // non-blocking socket
+  // END: HOST SOCKET
 
   server_addr_init(&server_addr, PORT);
 
@@ -79,7 +92,14 @@ int main(int argc, char **argv) {
                               &client_addr_len);
     if (client_socket < 0) {
       if (errno == EWOULDBLOCK || errno == EAGAIN) {
-        sleep(1); // this is a bit of a hack, look into self-piping
+        /*
+          This approach is functional but inefficient.
+          Consider using select(), poll(), or epoll() for a more efficient
+          wait mechanism that can handle multiple descriptors
+          (client sockets and possibly other resources) simultaneously without
+          busy waiting.
+         */
+        sleep(1);
         continue;
       } else if (RUN) {
         perror("HOST :: rejected client_socket.\n");
@@ -88,11 +108,7 @@ int main(int argc, char **argv) {
     }
 
     pthread_t thread = 0;
-    if (resolve_client_connection(client_socket,
-                                  &thread, client_addr) != 0 && RUN)
-    {
-      fprintf(stderr, "HOST :: %s(): failed to resolve client.\n", __func__);
-    }
+    resolve_client_connection(client_socket, &thread, client_addr);
   }
 
   close(server_socket);
@@ -103,25 +119,24 @@ int main(int argc, char **argv) {
 
 void host_panic_on_fail(bool cond, int server_socket, const char *msg) {
   if (cond) {
-    perror(strcat("HOST :: panic_on_fail(): ", msg));
+    perror("HOST ::");
+    fprintf(stderr, "%s(): %s", __func__, msg);
     close(server_socket);
     exit(EXIT_FAILURE);
   }
 }
 
-void add_thread(pthread_t thread) {
-  if (CLIENT_COUNT < MAX_CLIENTS) {
-    CLIENT_THREAD_IDS[CLIENT_COUNT++] = thread;
-    printf("Client thread successfully added.\n");
-  } else {
-    fprintf(stderr, "%s(): maximum thread count met.\n", __func__);
-  }
+void add_client(pthread_t thread) {
+  CLIENT_THREAD_IDS[CLIENT_COUNT++] = thread;
+  printf("%s(): client thread successfully added.\n", __func__);
 }
 
 void join_all_threads(void) {
   printf("%s(): cleaning up threads.\n", __func__);
   for (int i = 0; i < CLIENT_COUNT; i++) {
     if (pthread_cancel(CLIENT_THREAD_IDS[i]) == 0) {
+      printf("%s(): cancelling thread %d\n", __func__, i);
+      fflush(stdout);
       pthread_join(CLIENT_THREAD_IDS[i], NULL);
     }
   }
@@ -133,43 +148,57 @@ int resolve_client_connection(int client_socket,
                               struct sockaddr_in client_addr)
 {
   if (client_socket < 0) return -1;
-  else {
-    int *ptr_client_socket = malloc(sizeof(int));
-    if (ptr_client_socket == NULL) {
-      fprintf(stderr, "%s(): malloc failure.\n", __func__);
-      close(client_socket);
-      return -1;
-    } else {
-      *ptr_client_socket = client_socket;
-      int p = pthread_create(thread, NULL, handle_client, ptr_client_socket);
-      if (p == 0) {
-        add_thread(*thread); 
-      } else {
-        close(client_socket);
-        free(ptr_client_socket);
-        return -1;
-      }
-    }
+  if ((CLIENT_COUNT + 1 > MAX_CLIENTS)) {
+    printf("%s(): rejected new client, at (%d) capacity.\n",
+           __func__, MAX_CLIENTS);
+    return -1;
+  };
+
+  int *ptr_client_socket = malloc(sizeof(int));
+  if (!ptr_client_socket) {
+    fprintf(stderr, "%s(): malloc failure.\n", __func__);
+    close(client_socket);
+    return -1;
   }
-  printf("Client connected: %s\n", inet_ntoa(client_addr.sin_addr));
+
+  *ptr_client_socket = client_socket;
+  if (pthread_create(thread, NULL, handle_client, ptr_client_socket) != 0) {
+    close(client_socket);
+    free(ptr_client_socket); // Cleanup on thread creation failure
+    return -1;
+  }
+
+  add_client(*thread);
+  printf("%s(): client connected --> %s\nTotal clients: %d\n",
+         __func__, inet_ntoa(client_addr.sin_addr), CLIENT_COUNT);
   return 0;
 }
 
-void *handle_client(void *arg) {
+void client_cleanup_handler(void *arg) {
   int client_socket = *((int *) arg);
+  printf("%s(): cleaning client socket %d\n", __func__, client_socket);
+  fflush(stdout);
+  close(client_socket);
+  free(arg);
+}
+
+void *handle_client(void *arg) {
+  int *client_socket = (int *) arg;
+  pthread_cleanup_push(client_cleanup_handler, client_socket);
 
   char buffer[256];
   int bytes_read;
 
   while (RUN) {
     // should switch to select(), poll() or epoll()
-    bytes_read = (int) recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+    bytes_read = (int) recv(*client_socket, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) break;
     buffer[bytes_read] = '\0'; // Null-terminate the received data
     printf("Received: %s", buffer);
   }
 
-  close(client_socket);
+  close(*client_socket);
+  pthread_cleanup_pop(1);
   return NULL;
 }
 
