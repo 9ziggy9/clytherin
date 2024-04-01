@@ -1,6 +1,7 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum
 BIN_DIR=./bin
+SAVE_DIR=./saves
 TEST_TXT="hello world" "goodbye moon" "milksteak" "little green ghouls buddy"
 
 # COLOR ALIASES
@@ -48,4 +49,4 @@ bin_dir:
 .PHONY: clean
 clean:
 	$(call print_in_color, $(GREEN), \nCleaning...\n)
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) $(SAVE_DIR)
