@@ -1,15 +1,26 @@
 #include <stdio.h>
-#include <sqlite3.h>
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
 #include <sys/stat.h> // mkdir
 #include <sys/types.h> // mkdir
-#include <stdint.h>
+#include "db.h"
 
-#define MAX_PATH_LEN 260
+static const char *SQL_RAW_TABLE_USER =
+  "CREATE TABLE IF NOT EXISTS users ("
+  "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+  "name TEXT NOT NULL, "
+  "created_at DATETIME DEFAULT CURRENT_TIMESTAMP);";
 
-typedef int32_t p_key_t;
+static const char *SQL_RAW_TABLE_MSG =
+  "CREATE TABLE IF NOT EXISTS messages ("
+  "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+  "content TEXT NOT NULL, "
+  "sender_id INTEGER NOT NULL, "
+  "recipient_id INTEGER NOT NULL, "
+  "date DATETIME DEFAULT CURRENT_TIMESTAMP, "
+  "FOREIGN KEY(sender_id) REFERENCES users(id), "
+  "FOREIGN KEY(recipient_id) REFERENCES users(id));";
 
 void open_db_or_die(sqlite3 **db) {
   if(sqlite3_open(":memory:", db) != SQLITE_OK) {
@@ -32,12 +43,7 @@ void close_db(sqlite3 *db) {
 
 void create_table_users(sqlite3 *db) {
   char *err = 0;
-  const char *sql =
-    "CREATE TABLE IF NOT EXISTS users ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-    "name TEXT NOT NULL, "
-    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP);";
-  if (sqlite3_exec(db, sql, 0, 0, &err) != SQLITE_OK) {
+  if (sqlite3_exec(db, SQL_RAW_TABLE_USER, 0, 0, &err) != SQLITE_OK) {
     fprintf(stderr, "%s() :: error creating users table: %s\n",
             __func__, err);
     sqlite3_free(err);
@@ -48,16 +54,7 @@ void create_table_users(sqlite3 *db) {
 
 void create_table_messages(sqlite3 *db) {
   char *err = 0;
-  const char *sql =
-    "CREATE TABLE IF NOT EXISTS messages ("
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-    "content TEXT NOT NULL, "
-    "sender_id INTEGER NOT NULL, "
-    "recipient_id INTEGER NOT NULL, "
-    "date DATETIME DEFAULT CURRENT_TIMESTAMP, "
-    "FOREIGN KEY(sender_id) REFERENCES users(id), "
-    "FOREIGN KEY(recipient_id) REFERENCES users(id));";
-  if (sqlite3_exec(db, sql, 0, 0, &err) != SQLITE_OK) {
+  if (sqlite3_exec(db, SQL_RAW_TABLE_MSG, 0, 0, &err) != SQLITE_OK) {
       fprintf(stderr, "%s() :: error creating messages table: %s\n",
               __func__, err);
       sqlite3_free(err);
@@ -67,10 +64,10 @@ void create_table_messages(sqlite3 *db) {
   }
 }
 
-p_key_t insert_user(sqlite3 *db, const char *name) {
+sqlite3_int64 insert_user(sqlite3 *db, const char *name) {
   sqlite3_stmt *stmt;
   const char *sql = "INSERT INTO users (name) VALUES (?);";
-  p_key_t last_id = -1;
+  sqlite3_int64 last_id = -1;
 
   fprintf(stdout, "%s() :: try( %s )\n", __func__, sql);
 
@@ -95,7 +92,7 @@ p_key_t insert_user(sqlite3 *db, const char *name) {
   return last_id;
 }
 
-p_key_t insert_message(sqlite3 *db,
+sqlite3_int64 insert_message(sqlite3 *db,
                        const char *content,
                        int sender_id,
                        int recipient_id)
@@ -103,7 +100,7 @@ p_key_t insert_message(sqlite3 *db,
   sqlite3_stmt *stmt;
   const char *sql = "INSERT INTO messages (content, sender_id, "
                     "recipient_id) VALUES (?, ?, ?);";
-  p_key_t last_id = -1;
+  sqlite3_int64 last_id = -1;
 
   fprintf(stdout, "%s() :: try( %s )\n", __func__, sql);
 
@@ -174,13 +171,14 @@ void commit_from_memory(sqlite3 *source_db, const char *path) {
   sqlite3_close(target_db);
 }
 
+#ifdef __RUN_AS_STANDALONE__
 int main(void) {
   sqlite3 *db = NULL;
   open_db_or_die(&db);
   create_table_messages(db);
   create_table_users(db);
-  p_key_t uid1 = insert_user(db, "Ziggy");
-  p_key_t uid2 = insert_user(db, "Jack");
+  sqlite3_int64 uid1 = insert_user(db, "Ziggy");
+  sqlite3_int64 uid2 = insert_user(db, "Jack");
   insert_message(db, "hello world!",   uid1, uid2);
   insert_message(db, "goodbye moon!",  uid1, uid2);
   insert_message(db, "ola sun!",       uid2, uid1);
@@ -188,3 +186,4 @@ int main(void) {
   commit_from_memory(db, "./saves/");
   close_db(db);
 }
+#endif

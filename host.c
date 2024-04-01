@@ -10,6 +10,9 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <assert.h>
+
+#include "db.h"
 
 #define PORT_DEFAULT 9001
 
@@ -17,8 +20,14 @@
 In the future, a thread pool should be implemented.
 */
 #define MAX_CLIENTS 2
-pthread_t CLIENT_THREAD_IDS[MAX_CLIENTS];
 int CLIENT_COUNT = 0;
+typedef struct {
+  const char *name;
+  int id;
+  int socket;
+  pthread_t thread_id;
+} Client;
+Client CLIENTS[MAX_CLIENTS];
 
 typedef struct {
   sigset_t *set;
@@ -37,7 +46,7 @@ sigset_t init_sigset(void);
 void *handle_signal_thread(void *);
 
 void join_all_threads(void);
-void add_client(pthread_t);
+void add_client(pthread_t, int);
 void *handle_client(void *);
 void host_panic_on_fail(bool, int, const char *);
 int resolve_client_connection(int, pthread_t *, struct sockaddr_in);
@@ -130,18 +139,33 @@ void host_panic_on_fail(bool cond, int server_socket, const char *msg) {
   }
 }
 
-void add_client(pthread_t thread) {
-  CLIENT_THREAD_IDS[CLIENT_COUNT++] = thread;
+void broadcast_message(int sender_socket, const char *msg) {
+  for (int i = 0; i < CLIENT_COUNT; i++) {
+    if (CLIENTS[i].socket != sender_socket) {
+      send(CLIENTS[i].socket, msg, strlen(msg), 0);
+    }
+  }
+}
+
+void add_client(pthread_t thread, int client_socket) {
+  CLIENTS[CLIENT_COUNT].thread_id = thread;
+  CLIENTS[CLIENT_COUNT].socket = client_socket;
+  CLIENTS[CLIENT_COUNT].id = CLIENT_COUNT;
+  CLIENT_COUNT++;
   printf("%s(): client thread successfully added.\n", __func__);
+}
+
+void remove_client(void) {
+  assert(false && "UNIMPLEMENTED");
 }
 
 void join_all_threads(void) {
   printf("%s(): cleaning up threads.\n", __func__);
   for (int i = 0; i < CLIENT_COUNT; i++) {
-    if (pthread_cancel(CLIENT_THREAD_IDS[i]) == 0) {
+    if (pthread_cancel(CLIENTS[i].thread_id) == 0) {
       printf("%s(): cancelling thread %d\n", __func__, i);
       fflush(stdout);
-      pthread_join(CLIENT_THREAD_IDS[i], NULL);
+      pthread_join(CLIENTS[i].thread_id, NULL);
     }
   }
   CLIENT_COUNT = 0;
@@ -177,7 +201,7 @@ int resolve_client_connection(int client_socket,
     return -1;
   }
 
-  add_client(*thread);
+  add_client(*thread, client_socket);
   printf("%s(): client connected --> %s\nTotal clients: %d\n",
          __func__, inet_ntoa(client_addr.sin_addr), CLIENT_COUNT);
   send(*ptr_client_socket, WELCOME_MSG, strlen(WELCOME_MSG), 0);
@@ -207,6 +231,7 @@ void *handle_client(void *arg) {
     if (bytes_read <= 0) break;
     buffer[bytes_read] = '\0'; // Null-terminate the received data
     printf("Received: %s", buffer);
+    broadcast_message(*client_socket, buffer);
   }
 
   close(*client_socket);

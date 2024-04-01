@@ -20,14 +20,16 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-all: db
+all: db.o host.c
+	$(call print_in_color, $(BLUE), \nCOMPILING host.c\n)
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/host host.c $(BIN_DIR)/db.o -lsqlite3
 
 test: client
 	$(BIN_DIR)/client $(TEST_TXT)
 
-db: bin_dir db.c
+db.o: bin_dir db.c
 	$(call print_in_color, $(BLUE), \nCOMPILING db.c\n)
-	$(CC) $(CFLAGS) db.c -o $(BIN_DIR)/$@ -lsqlite3
+	$(CC) $(CFLAGS) -c db.c -o $(BIN_DIR)/$@ -lsqlite3
 
 host: bin_dir host.c
 	$(call print_in_color, $(BLUE), \nCOMPILING host.c\n)
