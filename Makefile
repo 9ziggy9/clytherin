@@ -19,10 +19,14 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-all: host
+all: db
 
 test: client
 	$(BIN_DIR)/client $(TEST_TXT)
+
+db: bin_dir db.c
+	$(call print_in_color, $(BLUE), \nCOMPILING db.c\n)
+	$(CC) $(CFLAGS) db.c -o $(BIN_DIR)/$@ -lsqlite3
 
 host: bin_dir host.c
 	$(call print_in_color, $(BLUE), \nCOMPILING host.c\n)
