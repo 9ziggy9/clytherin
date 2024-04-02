@@ -32,9 +32,14 @@ uint16_t extract_or_default_port(int, char **);
 // BEGIN: LOGGING FN
 // While you can use the implementation function directly, the macro
 // is written to avoid direct usage of __func__ every time we call a log.
-#define LOG_FROM_FN(target, fmt, ...) \
-  _log_from_fn(target, __func__, fmt, ##__VA_ARGS__)
 typedef enum { STD, WARN, ERR } log_t ;
+#define LOG_FROM_STD(fmt, ...) \
+  _log_from_fn(STD, __func__, fmt, ##__VA_ARGS__)
+#define LOG_FROM_WARN(fmt, ...) \
+  _log_from_fn(WARN, __func__, fmt, ##__VA_ARGS__)
+#define LOG_FROM_ERR(fmt, ...) \
+  _log_from_fn(ERR, __func__, fmt, ##__VA_ARGS__)
+
 void _log_from_fn(log_t target, const char *fn, const char *fmt, ...) {
   FILE *stream = target == STD ? stdout : stderr;
 
@@ -78,7 +83,7 @@ int main(int argc, char **argv) {
 
 uint16_t extract_or_default_port(int argc, char **argv) {
   if (argc < 2) {
-    LOG_FROM_FN(WARN, "no port given, defaulting to %d\n", PORT_DEFAULT);
+    LOG_FROM_WARN("no port given, defaulting to %d\n", PORT_DEFAULT);
     return PORT_DEFAULT;
   }
   return (uint16_t) atoi(argv[1]);
