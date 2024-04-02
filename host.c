@@ -31,7 +31,7 @@ Client CLIENTS[MAX_CLIENTS];
 
 typedef struct {
   sigset_t *set;
-  int *server_socket;
+  int *host_socket;
 } ThreadContext;
 
 /*
@@ -52,39 +52,42 @@ void host_panic_on_fail(bool, int, const char *);
 int resolve_client_connection(int, pthread_t *, struct sockaddr_in);
 uint16_t extract_or_default_port(int, char **);
 void server_addr_init(struct sockaddr_in *server_addr, uint16_t);
+
+const char *WELCOME_MSG = "hello, welcome fren!\n";
+const char *CONN_REFUSED = "Connection to host refused!\n";
  
 int main(int argc, char **argv) {
   const uint16_t PORT = extract_or_default_port(argc, argv);
 
-  int server_socket;
+  int host_socket;
   struct sockaddr_in server_addr, client_addr;
   socklen_t client_addr_len = sizeof(client_addr);
 
   // BEGIN: HOST SOCKET
-  server_socket = socket(AF_INET, SOCK_STREAM, 0);
-  host_panic_on_fail(server_socket < 0,
-                     server_socket,
+  host_socket = socket(AF_INET, SOCK_STREAM, 0);
+  host_panic_on_fail(host_socket < 0,
+                     host_socket,
                      "failed to create socket.\n");
   // TCP TIME_WAIT state may linger, this comes from TCP stack configuration
   // of the operating system, setting SO_REUSEADDR is to mitigate busy port
   // annoyances.
   int optval = 1;
-  setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  fcntl(server_socket, F_SETFL, O_NONBLOCK); // non-blocking socket
+  setsockopt(host_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+  fcntl(host_socket, F_SETFL, O_NONBLOCK); // non-blocking socket
   // END: HOST SOCKET
 
   server_addr_init(&server_addr, PORT);
 
-  const int bind_result = bind(server_socket,
+  const int bind_result = bind(host_socket,
                                 (struct sockaddr *) &server_addr,
                                 sizeof(server_addr));
 
   host_panic_on_fail(bind_result < 0,
-                     server_socket,
+                     host_socket,
                      "binding on socket failed.\n");
 
-  host_panic_on_fail(listen(server_socket, 5) < 0,
-                     server_socket,
+  host_panic_on_fail(listen(host_socket, 5) < 0,
+                     host_socket,
                      "failed to listen on socket.\n");
 
   printf("Server listening on port %d...\n", PORT);
@@ -93,14 +96,14 @@ int main(int argc, char **argv) {
   sigset_t set = init_sigset();
   ThreadContext ctx = {
     .set = &set,
-    .server_socket = &server_socket
+    .host_socket = &host_socket
   };
   pthread_t sig_thread = 0;
   pthread_create(&sig_thread, NULL, handle_signal_thread, (void *) &ctx);
   // END: logic for signal thread blocker
 
   while (RUN) {
-    int client_socket = accept(server_socket,
+    int client_socket = accept(host_socket,
                               (struct sockaddr *) &client_addr,
                               &client_addr_len);
     if (client_socket < 0) {
@@ -124,17 +127,17 @@ int main(int argc, char **argv) {
     resolve_client_connection(client_socket, &thread, client_addr);
   }
 
-  close(server_socket);
+  close(host_socket);
   join_all_threads();
   printf("Host closed peacefully.\n");
   return 0;
 }
 
-void host_panic_on_fail(bool cond, int server_socket, const char *msg) {
+void host_panic_on_fail(bool cond, int host_socket, const char *msg) {
   if (cond) {
     perror("HOST ::");
     fprintf(stderr, "%s(): %s", __func__, msg);
-    close(server_socket);
+    close(host_socket);
     exit(EXIT_FAILURE);
   }
 }
@@ -171,8 +174,6 @@ void join_all_threads(void) {
   CLIENT_COUNT = 0;
 }
 
-const char *WELCOME_MSG = "Hello, welcome fren!\n";
-const char *CONN_REFUSED = "Connection to host refused!\n";
 int resolve_client_connection(int client_socket,
                               pthread_t *thread,
                               struct sockaddr_in client_addr)
@@ -204,7 +205,7 @@ int resolve_client_connection(int client_socket,
   add_client(*thread, client_socket);
   printf("%s(): client connected --> %s\nTotal clients: %d\n",
          __func__, inet_ntoa(client_addr.sin_addr), CLIENT_COUNT);
-  send(*ptr_client_socket, WELCOME_MSG, strlen(WELCOME_MSG), 0);
+  send(client_socket, WELCOME_MSG, strlen(WELCOME_MSG), 0);
   return 0;
 }
 
@@ -223,14 +224,16 @@ void *handle_client(void *arg) {
   pthread_cleanup_push(client_cleanup_handler, client_socket);
 
   char buffer[256];
-  int bytes_read;
+  ssize_t bytes_read;
 
   while (RUN) {
     // should switch to select(), poll() or epoll()
-    bytes_read = (int) recv(*client_socket, buffer, sizeof(buffer) - 1, 0);
+    bytes_read = recv(*client_socket, buffer, sizeof(buffer) - 1, 0);
     if (bytes_read <= 0) break;
+    buffer[bytes_read++] = '\n'; // Null-terminate the received data
     buffer[bytes_read] = '\0'; // Null-terminate the received data
     printf("Received: %s", buffer);
+    send(*client_socket, "msg sent", strlen("msg sent"), 0);
     broadcast_message(*client_socket, buffer);
   }
 

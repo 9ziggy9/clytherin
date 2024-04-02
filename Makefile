@@ -27,6 +27,10 @@ all: db.o host.c
 test: client
 	$(BIN_DIR)/client $(TEST_TXT)
 
+naive: bin_dir naive-client.c
+	$(call print_in_color, $(BLUE), \nCOMPILING naive-client.c\n)
+	$(CC) $(CFLAGS) naive-client.c -o $(BIN_DIR)/$@
+
 db.o: bin_dir db.c
 	$(call print_in_color, $(BLUE), \nCOMPILING db.c\n)
 	$(CC) $(CFLAGS) -c db.c -o $(BIN_DIR)/$@ -lsqlite3

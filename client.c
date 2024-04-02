@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
   for (int i = 1; i < argc - 1; ++i) {
     mvwprintw(w_master, i, 1, " -> %s", argv[i]);
     msg_id++;
-  }
+ }
   // END: TESTING PURPOSES ONLY
 
   // TODO: Refactor, highlighting should be more generic
