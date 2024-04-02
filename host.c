@@ -10,29 +10,39 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <assert.h>
 
 #include "db.h"
 
 #define PORT_DEFAULT 9001
+#define MAX_TXT_BUFFER 256
 
-/*
-In the future, a thread pool should be implemented.
-*/
+// BEGIN: client data structure
+// In the future, a thread pool should be implemented.
 #define MAX_CLIENTS 2
 int CLIENT_COUNT = 0;
+
 typedef struct {
+  bool is_connected;
   const char *name;
   int id;
   int socket;
   pthread_t thread_id;
 } Client;
-Client CLIENTS[MAX_CLIENTS];
 
+Client CLIENTS[MAX_CLIENTS];
+void clients_init(void);
+void add_client(pthread_t, int);
+void remove_client(int socket);
+// END: client data structure
+
+// BEGIN: signal thread
 typedef struct {
   sigset_t *set;
   int *host_socket;
 } ThreadContext;
+sigset_t init_sigset(void);
+void *handle_signal_thread(void *);
+// END: signal thread
 
 /*
 Setting RUN as volatile sig_atomic_t ensures atomicity for int-sized read/write
@@ -42,11 +52,7 @@ alongside the RUN flag.
 */
 volatile sig_atomic_t RUN = 1;
 
-sigset_t init_sigset(void);
-void *handle_signal_thread(void *);
-
 void join_all_threads(void);
-void add_client(pthread_t, int);
 void *handle_client(void *);
 void host_panic_on_fail(bool, int, const char *);
 int resolve_client_connection(int, pthread_t *, struct sockaddr_in);
@@ -102,6 +108,8 @@ int main(int argc, char **argv) {
   pthread_create(&sig_thread, NULL, handle_signal_thread, (void *) &ctx);
   // END: logic for signal thread blocker
 
+  clients_init(); // to unconnected
+
   while (RUN) {
     int client_socket = accept(host_socket,
                               (struct sockaddr *) &client_addr,
@@ -142,24 +150,12 @@ void host_panic_on_fail(bool cond, int host_socket, const char *msg) {
   }
 }
 
-void broadcast_message(int sender_socket, const char *msg) {
+void broadcast_message_from(int sender_socket, const char *msg) {
   for (int i = 0; i < CLIENT_COUNT; i++) {
     if (CLIENTS[i].socket != sender_socket) {
       send(CLIENTS[i].socket, msg, strlen(msg), 0);
     }
   }
-}
-
-void add_client(pthread_t thread, int client_socket) {
-  CLIENTS[CLIENT_COUNT].thread_id = thread;
-  CLIENTS[CLIENT_COUNT].socket = client_socket;
-  CLIENTS[CLIENT_COUNT].id = CLIENT_COUNT;
-  CLIENT_COUNT++;
-  printf("%s(): client thread successfully added.\n", __func__);
-}
-
-void remove_client(void) {
-  assert(false && "UNIMPLEMENTED");
 }
 
 void join_all_threads(void) {
@@ -211,19 +207,19 @@ int resolve_client_connection(int client_socket,
 
 void client_cleanup_handler(void *arg) {
   int client_socket = *((int *) arg);
-  printf("%s(): client (%d) exited\n", __func__, client_socket);
-  printf("%s(): cleaning client socket %d\n", __func__, client_socket);
+  printf("%s(): client (%d) exiting ...\n", __func__, client_socket);
+  printf("%s(): cleaning client socket ... \n", __func__);
   fflush(stdout);
   close(client_socket);
+  remove_client(client_socket);
   free(arg);
-  CLIENT_COUNT--;
 }
 
 void *handle_client(void *arg) {
   int *client_socket = (int *) arg;
   pthread_cleanup_push(client_cleanup_handler, client_socket);
 
-  char buffer[256];
+  char buffer[MAX_TXT_BUFFER];
   ssize_t bytes_read;
 
   while (RUN) {
@@ -234,7 +230,7 @@ void *handle_client(void *arg) {
     buffer[bytes_read] = '\0'; // Null-terminate the received data
     printf("Received: %s", buffer);
     send(*client_socket, "msg sent", strlen("msg sent"), 0);
-    broadcast_message(*client_socket, buffer);
+    broadcast_message_from(*client_socket, buffer);
   }
 
   close(*client_socket);
@@ -284,4 +280,38 @@ void *handle_signal_thread(void *raw) {
     }
   }
   return NULL;
+}
+
+void clients_init(void) {
+  size_t n = 0;
+  while (n < MAX_CLIENTS) {
+    CLIENTS[n].is_connected = false;
+    CLIENTS[n].socket = -1;
+    CLIENTS[n++].id = -1;
+  }
+}
+
+void add_client(pthread_t thread, int client_socket) {
+  CLIENTS[CLIENT_COUNT].thread_id = thread;
+  CLIENTS[CLIENT_COUNT].socket = client_socket;
+  CLIENTS[CLIENT_COUNT].id = CLIENT_COUNT;
+  CLIENTS[CLIENT_COUNT].is_connected = true;
+  CLIENT_COUNT++;
+  printf("%s(): client successfully added on socket %d.\n",
+         __func__, client_socket);
+  fflush(stdout);
+}
+
+void remove_client(int socket) {
+  for (size_t n = 0; n < MAX_CLIENTS; n ++) {
+    if (CLIENTS[n].socket == socket) {
+      CLIENTS[n].socket = -1;
+      CLIENTS[n].id = -1;
+      CLIENTS[n].is_connected = false;
+      CLIENT_COUNT--;
+      printf("%s(): client successfully removed from socket %d.\n",
+             __func__, socket);
+      fflush(stdout);
+    }
+  }
 }

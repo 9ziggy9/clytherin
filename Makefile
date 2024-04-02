@@ -35,6 +35,10 @@ db.o: bin_dir db.c
 	$(call print_in_color, $(BLUE), \nCOMPILING db.c\n)
 	$(CC) $(CFLAGS) -c db.c -o $(BIN_DIR)/$@ -lsqlite3
 
+host_p: bin_dir host-poll.c
+	$(call print_in_color, $(BLUE), \nCOMPILING host-poll.c\n)
+	$(CC) $(CFLAGS) host-poll.c -o $(BIN_DIR)/host
+
 host: bin_dir host.c
 	$(call print_in_color, $(BLUE), \nCOMPILING host.c\n)
 	$(CC) $(CFLAGS) host.c -o $(BIN_DIR)/$@
