@@ -52,7 +52,7 @@ int get_listener_socket(uint16_t);
 void poll_disconnect_guard(int);
 void connect_client(ClientPool *, int, struct sockaddr_storage *);
 void disconnect_client(ClientPool *, int);
-void broadcast_all(ClientPool *, int, char *, ssize_t);
+void broadcast_all(ClientPool *, int, int, char *, ssize_t);
 // END: net
 
 #ifndef TEST__ // PRODUCTION
@@ -71,24 +71,30 @@ int main(int argc, char **argv) {
     poll_disconnect_guard(poll_count);
 
     for (int c = 0; c < client_pool->n_clients; c++) {
-      if (client_pool->pfds[c].fd == listener) { // listener routines
-        struct sockaddr_storage client_addr;
-        socklen_t client_addr_len = sizeof(client_addr);
-        int new_client_fd = accept(listener, (struct sockaddr *) &client_addr,
-                                   &client_addr_len);
-        connect_client(client_pool, new_client_fd, &client_addr);
-      } else { // client routines
-        ssize_t num_bytes = recv(client_pool->pfds[c].fd,
-                                 data_buffer, sizeof(data_buffer), 0);
-        if (num_bytes <= 0) {
-          if (num_bytes == 0) {
-            LOG_FROM_STD("socket %d hung up\n", client_pool->pfds[c].fd);
+      if (client_pool->pfds[c].revents && POLLIN) {
+        if (client_pool->pfds[c].fd == listener) { // listener routines
+          struct sockaddr_storage client_addr;
+          socklen_t client_addr_len = sizeof(client_addr);
+          int new_client_fd = accept(listener, (struct sockaddr *) &client_addr,
+                                    &client_addr_len);
+          connect_client(client_pool, new_client_fd, &client_addr);
+        } else { // client routines
+          ssize_t num_bytes = recv(client_pool->pfds[c].fd,
+                                   data_buffer, sizeof(data_buffer), 0);
+          if (num_bytes <= 0) {
+            if (num_bytes == 0) {
+              LOG_FROM_STD("socket %d hung up\n", client_pool->pfds[c].fd);
+            } else {
+              LOG_FROM_ERR("recv() failure\n");
+              LOG_APPEND("errno: %s\n", errno);
+            }
+            disconnect_client(client_pool, c);
           } else {
-            LOG_FROM_ERR("recv() failure\n");
-            LOG_APPEND("errno: %s\n", errno);
+            broadcast_all(client_pool,
+                          client_pool->pfds[c].fd,
+                          listener,
+                          data_buffer, num_bytes);
           }
-        } else {
-          broadcast_all(client_pool, listener, data_buffer, num_bytes);
         }
       }
     }
@@ -280,7 +286,7 @@ void poll_disconnect_guard(int poll_count) {
     LOG_FATAL("polling timed out, do data for %d milliseconds\n", TIMEOUT);
     exit(EXIT_FAILURE);
   case -1:
-    LOG_FATAL("poll suddenly dropped out!\n");
+    LOG_FATAL("poll suddenly dropped out\n");
     LOG_APPEND("errno: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   default: return;
@@ -304,6 +310,7 @@ connect_client(ClientPool *pool, int client_fd, struct sockaddr_storage *addr)
     return;
   }
   if (client_add(pool, client_fd, POLLIN) < 0) {
+    LOG_FROM_ERR("failed to add client, closing socket\n");
     close(client_fd);
     return;
   }
@@ -320,13 +327,14 @@ void disconnect_client(ClientPool *pool, int client_id) {
   client_remove(pool, pool->pfds[client_id].fd);
 }
 
-void
-broadcast_all(ClientPool *pool, int sender_fd, char *msg, ssize_t msg_len)
+/* NEED DEBUGGER */
+void broadcast_all(ClientPool *pool,
+                   int send_fd, int list_fd,
+                   char *msg, ssize_t msg_len)
 {
-  int list_fd = pool->pfds[0].fd;
   for (int c = 0; c < pool->n_clients; c++) {
     int dest_fd = pool->pfds[c].fd;
-    if (dest_fd != list_fd || dest_fd != sender_fd) { // exclude
+    if (dest_fd != list_fd && dest_fd != send_fd) { // exclude
       if (send(dest_fd, msg, (size_t) msg_len, 0) == -1) {
         LOG_FROM_ERR("send() failed\n");
         LOG_APPEND("errno: %s\n", errno);
