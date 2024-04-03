@@ -22,13 +22,19 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
+.PHONY: run_host clean test_host
+
 all: clean $(OBJ) main
 
-.PHONY: run_host
+test_host: clean $(OBJ) main.c
+	$(call print_in_color, $(BLUE), \nCOMPILING main.c to EXE $(BIN_DIR)/run\n)
+	$(CC) $(CLFLAGS) main.c -o $(EXE) $(OBJ) -DTEST__
+	$(EXE)
+
 run_host:
 	$(EXE)
 
-main: $(BIN_DIR) main.c
+main: $(OBJ) main.c
 	$(call print_in_color, $(BLUE), \nCOMPILING main.c to EXE $(BIN_DIR)/run\n)
 	$(CC) $(CLFLAGS) main.c -o $(EXE) $(OBJ)
 
@@ -42,7 +48,6 @@ $(OBJ): | $(BIN_DIR)
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-.PHONY: clean
 clean:
 	$(call print_in_color, $(GREEN), \nCleaning...\n)
 	rm -rf $(BIN_DIR) $(SVE_DIR)

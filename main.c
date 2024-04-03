@@ -1,12 +1,9 @@
 #include <poll.h>
-
 #include "host.h"
-
 #define LOG_IMPLEMENTATION
 #include "log.h"
 
 #ifndef TEST__ // PRODUCTION
-
 int main(int argc, char **argv) {
   const uint16_t port = extract_or_default_port(argc, argv);
   char data_buffer[MAX_DATA_LEN];
@@ -49,12 +46,9 @@ int main(int argc, char **argv) {
       }
     }
   }
-
   return EXIT_SUCCESS;
 }
-
 #else // END PRODUCTION
-
 #include "unit_test.h"
 
 int main(int argc, char **argv) {
@@ -62,5 +56,4 @@ int main(int argc, char **argv) {
   UNIT_CLIENT_BASICS();
   return EXIT_SUCCESS;
 }
-
 #endif
