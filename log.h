@@ -15,12 +15,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef enum { STD, WARN, ERR } log_t;
+typedef enum { STD, WARN, ERR, FATAL } log_t;
 static FILE *_log_stream = NULL;
 
 #define LOG_FROM_STD(fmt, ...)  _log_from_fn(STD, __func__, fmt, ##__VA_ARGS__)
 #define LOG_FROM_WARN(fmt, ...) _log_from_fn(WARN, __func__, fmt, ##__VA_ARGS__)
 #define LOG_FROM_ERR(fmt, ...)  _log_from_fn(ERR, __func__, fmt, ##__VA_ARGS__)
+#define LOG_FATAL(fmt, ...)     _log_from_fn(FATAL,__func__, fmt, ##__VA_ARGS__)
 #define LOG_APPEND(fmt, ...)    _log_append(fmt, ##__VA_ARGS__)
 #endif //  LOG_H_
 
@@ -51,6 +52,10 @@ _log_from_fn(log_t target, const char *fn, const char *fmt, ...)
     break;
   case ERR:
     fprintf(_log_stream,  "\n%s[ERROR]\033[0m :: %s()\n",   ansi_clr, fn);
+    break;
+  case FATAL:
+    fprintf(_log_stream,  "\n%s!! [FATAL] !!\033[0m :: "
+                          "exiting immediately :: %s()\n", ansi_clr, fn);
     break;
   default:
     fprintf(stderr,  "[UNKNOWN] :: unreachable case\n");

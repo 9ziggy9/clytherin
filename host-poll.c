@@ -1,17 +1,22 @@
+#include <asm-generic/socket.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <netdb.h>
 #include <stdbool.h>
 #include <poll.h>
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
 
 #define LOG_IMPLEMENTATION
 #include "log.h"
 
 // BEGIN: misc
 #define PORT_DEFAULT 9001
-#define MAX_TXT_BUFFER 256
+#define MAX_MSG_LEN 256
 uint16_t extract_or_default_port(int, char **);
 // END: misc
 
@@ -19,7 +24,8 @@ uint16_t extract_or_default_port(int, char **);
 #define MAX_CLIENTS 2
 #define MIN_NAME_LEN 3
 #define MAX_NAME_LEN 25
-#define TIMEOUT 2500
+// 15 minutes
+#define TIMEOUT 900000
 
 typedef struct {
   bool is_connected;
@@ -40,30 +46,25 @@ int client_remove(ClientPool *, int);
 void clients_destroy(ClientPool *);
 // END: client
 
+// BEGIN: net
+int get_listener_socket(uint16_t);
+void poll_disconnect_guard(int);
+// END: net
+
 #ifndef TEST__ // PRODUCTION
 
 int main(int argc, char **argv) {
-  const uint16_t PORT = extract_or_default_port(argc, argv);
-  (void) PORT;
+  const uint16_t port = extract_or_default_port(argc, argv);
+  char msg_buffer[MAX_MSG_LEN];
 
   ClientPool *client_pool = clients_init(MAX_CLIENTS);
-  client_add(client_pool, 0, POLLIN);
+  client_add(client_pool, get_listener_socket(port), POLLIN);
 
-  LOG_FROM_STD("hit RETURN or wait 2.5 seconds for timeout\n");
+  for (;;) {
+    int poll_count = poll(client_pool->pfds, client_pool->n_clients, TIMEOUT);
+    poll_disconnect_guard(poll_count);
 
-  int n_events = poll(client_pool->pfds, client_pool->n_clients, TIMEOUT);
-
-  if (n_events == 0) {
-    LOG_FROM_ERR("poll timed out\n");
-  } else {
-    int ready_recv = client_pool->pfds[0].revents & POLLIN;
-    if (ready_recv) {
-      LOG_FROM_STD("file descriptor %d is ready to read\n",
-                   client_pool->pfds[0].fd);
-    } else {
-      LOG_FROM_ERR("unexpected event occurred: %d\n",
-                   client_pool->pfds[0].revents);
-    }
+    // run through existing connections looking for data to read
   }
 
   return EXIT_SUCCESS;
@@ -71,11 +72,13 @@ int main(int argc, char **argv) {
 
 #else // END PRODUCTION
 #include "unit_test.h"
+
 int main(int argc, char **argv) {
   (void) argc; (void) argv;
   UNIT_CLIENT_BASICS();
   return EXIT_SUCCESS;
 }
+
 #endif
 
 
@@ -184,4 +187,78 @@ void clients_destroy(ClientPool *pool) {
   free(pool);
 }
 // END: CLIENTS
+
+// BEGIN: NET
+static const char *port_to_cstr(uint16_t port) {
+  char *cstr = malloc(6); // 6 because uint16_t can be > 9999
+  sprintf(cstr, "%d", port);
+  return cstr;
+}
+
+static void addr_info_configure(struct addrinfo *config) {
+  memset(config, 0, sizeof(*config)); // zero init all fields
+  config->ai_family   = AF_UNSPEC;    // IPv4 and IPv6
+  config->ai_socktype = SOCK_STREAM;  // TCP
+  config->ai_flags    = AI_PASSIVE;   // assign addr of localhost for me
+}
+
+static void suppress_addr_in_use(int fd) {
+  const int optval = 1; // setsockopt takes void * as opt value
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+}
+
+int get_listener_socket(uint16_t port) {
+  struct addrinfo config, *addr_info;
+  addr_info_configure(&config);
+
+  int rv; // store return value of getaddrinfo
+  if ((rv = getaddrinfo(NULL, port_to_cstr(port), &config, &addr_info)) != 0)
+  {
+    LOG_FATAL("%s\n", gai_strerror(rv));
+    exit(EXIT_FAILURE);
+  }
+
+  // traverse addr_info linked list
+  int listener_fd;
+  struct addrinfo *curr = addr_info;
+  for (curr = addr_info; curr != NULL; curr = curr->ai_next) {
+    listener_fd = socket(curr->ai_family, curr->ai_socktype, curr->ai_protocol);
+    if (listener_fd < 0) continue;
+    suppress_addr_in_use(listener_fd);
+    if (bind(listener_fd, curr->ai_addr, curr->ai_addrlen) < 0) {
+      close(listener_fd);
+      continue;
+    }
+    break;
+  }
+
+  freeaddrinfo(addr_info);
+
+  if (curr == NULL) {
+    LOG_FATAL("failed to bind file descriptor\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (listen(listener_fd, 10) == -1) {
+    LOG_FATAL("failed to listen at file descriptor\n");
+    exit(EXIT_FAILURE);
+  }
+
+  return listener_fd;
+}
+
+void poll_disconnect_guard(int poll_count) {
+  switch (poll_count) {
+  case 0:
+    LOG_FATAL("polling timed out, do data for %d milliseconds\n", TIMEOUT);
+    exit(EXIT_FAILURE);
+  case -1:
+    LOG_FATAL("poll suddenly dropped out!\n");
+    LOG_APPEND("errno: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  default: return;
+  }
+}
+// END: NET
+
 // END: IMPLEMENTATIONS
