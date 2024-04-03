@@ -1,0 +1,42 @@
+IMAGE_NAME := tcp_ip_host
+
+# COLOR ALIASES
+RED=\033[31m
+GREEN=\033[32m
+YELLOW=\033[33m
+BLUE=\033[34m
+MAGENTA=\033[35m
+CYAN=\033[36m
+RESET=\033[0m
+
+# colored output function
+define print_in_color
+	@printf "$1"
+	@printf "$2"
+	@printf "\033[0m"
+endef
+
+.PHONY: clean run build
+
+all: clean build run
+
+run:
+	docker run --name $(IMAGE_NAME) --rm -it $(IMAGE_NAME)
+
+build:
+	DOCKER_BUILDKIT=1 docker build -t $(IMAGE_NAME) .
+
+# this is extremely hacky, logical or prevents errors from
+# propagating up to `make` command.
+clean:
+	- docker stop $(IMAGE_NAME) 2>/dev/null   || true
+	- docker rmi -f $(IMAGE_NAME) 2>/dev/null || true
+	$(call print_in_color, $(GREEN), \nFinished cleaning, verify status)
+	$(call print_in_color, $(GREEN), (should all be empty)\n)
+	$(call print_in_color, $(CYAN), \nDocker containers running\n-- \n)
+	@docker ps -aq
+	$(call print_in_color, $(CYAN), \nDocker images list\n)
+	@docker image ls
+
+
+# docker container rm $(IMAGE_NAME) -- unnecessary due to --rm in run

@@ -3,7 +3,7 @@ CC      := cc
 CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum
 # support from c23 -> c89
 STD     := -std=c11
-BIN_DIR := ./bin
+BIN_DIR := ./build
 SVE_DIR := ./saves
 OBJ     := $(BIN_DIR)/host.o
 EXE     := $(BIN_DIR)/run
