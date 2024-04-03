@@ -1,4 +1,3 @@
-
 #ifndef HOST_H_
 #define HOST_H_
 
