@@ -1,6 +1,8 @@
-CC      := gcc
+# gcc is preferred but I do not explicitly set it
+CC      := cc
 CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum
-STD     := -std=gnu17
+# support from c23 -> c89
+STD     := -std=c11
 BIN_DIR := ./bin
 SVE_DIR := ./saves
 OBJ     := $(BIN_DIR)/host.o
@@ -21,6 +23,11 @@ define print_in_color
 	@printf "$2"
 	@printf "\033[0m"
 endef
+
+# suppress GNU extension warnings for clang
+ifeq ($(CC), clang)
+	CFLAGS += -Wno-gnu
+endif
 
 .PHONY: run_host clean test_host
 
