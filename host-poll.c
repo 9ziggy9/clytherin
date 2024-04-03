@@ -1,4 +1,5 @@
 #include <asm-generic/socket.h>
+#include <netinet/in.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -16,12 +17,12 @@
 
 // BEGIN: misc
 #define PORT_DEFAULT 9001
-#define MAX_MSG_LEN 256
+#define MAX_DATA_LEN 256
 uint16_t extract_or_default_port(int, char **);
 // END: misc
 
 // BEGIN: client
-#define MAX_CLIENTS 2
+#define MAX_CLIENTS 3
 #define MIN_NAME_LEN 3
 #define MAX_NAME_LEN 25
 // 15 minutes
@@ -49,22 +50,48 @@ void clients_destroy(ClientPool *);
 // BEGIN: net
 int get_listener_socket(uint16_t);
 void poll_disconnect_guard(int);
+void connect_client(ClientPool *, int, struct sockaddr_storage *);
+void disconnect_client(ClientPool *, int);
+void broadcast_all(ClientPool *, int, char *, ssize_t);
 // END: net
 
 #ifndef TEST__ // PRODUCTION
 
 int main(int argc, char **argv) {
   const uint16_t port = extract_or_default_port(argc, argv);
-  char msg_buffer[MAX_MSG_LEN];
+  char data_buffer[MAX_DATA_LEN];
 
   ClientPool *client_pool = clients_init(MAX_CLIENTS);
-  client_add(client_pool, get_listener_socket(port), POLLIN);
+
+  int listener = get_listener_socket(port);
+  client_add(client_pool, listener, POLLIN);
 
   for (;;) {
     int poll_count = poll(client_pool->pfds, client_pool->n_clients, TIMEOUT);
     poll_disconnect_guard(poll_count);
 
-    // run through existing connections looking for data to read
+    for (int c = 0; c < client_pool->n_clients; c++) {
+      if (client_pool->pfds[c].fd == listener) { // listener routines
+        struct sockaddr_storage client_addr;
+        socklen_t client_addr_len = sizeof(client_addr);
+        int new_client_fd = accept(listener, (struct sockaddr *) &client_addr,
+                                   &client_addr_len);
+        connect_client(client_pool, new_client_fd, &client_addr);
+      } else { // client routines
+        ssize_t num_bytes = recv(client_pool->pfds[c].fd,
+                                 data_buffer, sizeof(data_buffer), 0);
+        if (num_bytes <= 0) {
+          if (num_bytes == 0) {
+            LOG_FROM_STD("socket %d hung up\n", client_pool->pfds[c].fd);
+          } else {
+            LOG_FROM_ERR("recv() failure\n");
+            LOG_APPEND("errno: %s\n", errno);
+          }
+        } else {
+          broadcast_all(client_pool, listener, data_buffer, num_bytes);
+        }
+      }
+    }
   }
 
   return EXIT_SUCCESS;
@@ -257,6 +284,54 @@ void poll_disconnect_guard(int poll_count) {
     LOG_APPEND("errno: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   default: return;
+  }
+}
+
+static void *get_in_addr(struct sockaddr *sa) {
+  // cast to void * to suppress annoying warning
+  return (sa->sa_family == AF_INET)
+    ? (void *) &(((struct sockaddr_in *) sa)->sin_addr)
+    : (void *) &(((struct sockaddr_in6 *) sa)->sin6_addr);
+}
+
+void
+connect_client(ClientPool *pool, int client_fd, struct sockaddr_storage *addr)
+{
+  char remoteIP[INET6_ADDRSTRLEN];
+  if (client_fd == -1) {
+    LOG_FROM_ERR("failed to accept client connection\n");
+    LOG_APPEND("errno: %s\n", strerror(errno));
+    return;
+  }
+  if (client_add(pool, client_fd, POLLIN) < 0) {
+    close(client_fd);
+    return;
+  }
+  LOG_FROM_STD("new connection from %s on socket %d\n",
+              inet_ntop(addr->ss_family,
+                        get_in_addr((struct sockaddr *) addr),
+                        remoteIP, INET6_ADDRSTRLEN),
+              client_fd);
+  return;
+}
+
+void disconnect_client(ClientPool *pool, int client_id) {
+  close(pool->pfds[client_id].fd);
+  client_remove(pool, pool->pfds[client_id].fd);
+}
+
+void
+broadcast_all(ClientPool *pool, int sender_fd, char *msg, ssize_t msg_len)
+{
+  int list_fd = pool->pfds[0].fd;
+  for (int c = 0; c < pool->n_clients; c++) {
+    int dest_fd = pool->pfds[c].fd;
+    if (dest_fd != list_fd || dest_fd != sender_fd) { // exclude
+      if (send(dest_fd, msg, (size_t) msg_len, 0) == -1) {
+        LOG_FROM_ERR("send() failed\n");
+        LOG_APPEND("errno: %s\n", errno);
+      }
+    }
   }
 }
 // END: NET
