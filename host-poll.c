@@ -40,13 +40,36 @@ int client_remove(ClientPool *, int);
 void clients_destroy(ClientPool *);
 // END: client
 
-#ifndef TEST__
+#ifndef TEST__ // PRODUCTION
+
 int main(int argc, char **argv) {
   const uint16_t PORT = extract_or_default_port(argc, argv);
   (void) PORT;
+
+  ClientPool *client_pool = clients_init(MAX_CLIENTS);
+  client_add(client_pool, 0, POLLIN);
+
+  LOG_FROM_STD("hit RETURN or wait 2.5 seconds for timeout\n");
+
+  int n_events = poll(client_pool->pfds, client_pool->n_clients, TIMEOUT);
+
+  if (n_events == 0) {
+    LOG_FROM_ERR("poll timed out\n");
+  } else {
+    int ready_recv = client_pool->pfds[0].revents & POLLIN;
+    if (ready_recv) {
+      LOG_FROM_STD("file descriptor %d is ready to read\n",
+                   client_pool->pfds[0].fd);
+    } else {
+      LOG_FROM_ERR("unexpected event occurred: %d\n",
+                   client_pool->pfds[0].revents);
+    }
+  }
+
   return EXIT_SUCCESS;
 }
-#else
+
+#else // END PRODUCTION
 #include "unit_test.h"
 int main(int argc, char **argv) {
   (void) argc; (void) argv;
