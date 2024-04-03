@@ -14,19 +14,22 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 
-typedef enum { STD, WARN, ERR, FATAL } log_t;
-static FILE *_log_stream = NULL;
+typedef enum { SUCC, WARN, ERR, FATAL } log_t;
+void _log_append(const char *fmt, ...);
+void _log_from_fn(log_t target, const char *fn, const char *fmt, ...);
 
-#define LOG_FROM_STD(fmt, ...)  _log_from_fn(STD, __func__, fmt, ##__VA_ARGS__)
+#define LOG_FROM_SUCC(fmt, ...) _log_from_fn(SUCC, __func__, fmt, ##__VA_ARGS__)
 #define LOG_FROM_WARN(fmt, ...) _log_from_fn(WARN, __func__, fmt, ##__VA_ARGS__)
 #define LOG_FROM_ERR(fmt, ...)  _log_from_fn(ERR, __func__, fmt, ##__VA_ARGS__)
 #define LOG_FATAL(fmt, ...)     _log_from_fn(FATAL,__func__, fmt, ##__VA_ARGS__)
 #define LOG_APPEND(fmt, ...)    _log_append(fmt, ##__VA_ARGS__)
-#endif //  LOG_H_
 
 #ifdef LOG_IMPLEMENTATION
-static inline void _log_append(const char *fmt, ...) {
+static FILE *_log_stream = NULL;
+
+void _log_append(const char *fmt, ...) {
   fprintf(_log_stream, "» ");
   va_list args;
   va_start(args, fmt);
@@ -34,18 +37,17 @@ static inline void _log_append(const char *fmt, ...) {
   va_end(args);
 }
 
-static inline void
-_log_from_fn(log_t target, const char *fn, const char *fmt, ...)
+void _log_from_fn(log_t target, const char *fn, const char *fmt, ...)
 {
-  _log_stream = target == STD ? stdout : stderr;
+  _log_stream = target == SUCC ? stdout : stderr;
 
-  const char *ansi_clr = target == STD
+  const char *ansi_clr = target == SUCC
     ? "\033[32m" : target == WARN
     ? "\033[33m" : "\033[31m";
 
   switch (target) {
-  case STD:
-    fprintf(_log_stream,  "\n%s[MESSAGE]\033[0m :: %s()\n",  ansi_clr, fn);
+  case SUCC:
+    fprintf(_log_stream,  "\n%s[SUCCESS]\033[0m :: %s()\n",  ansi_clr, fn);
     break;
   case WARN:
     fprintf(_log_stream,  "\n%s[WARNING]\033[0m :: %s()\n", ansi_clr, fn);
@@ -69,3 +71,4 @@ _log_from_fn(log_t target, const char *fn, const char *fmt, ...)
 }
 
 #endif // LOG_IMPLEMENTATION
+#endif //  LOG_H_

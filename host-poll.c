@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
                                    data_buffer, sizeof(data_buffer), 0);
           if (num_bytes <= 0) {
             if (num_bytes == 0) {
-              LOG_FROM_STD("socket %d hung up\n", client_pool->pfds[c].fd);
+              LOG_FROM_SUCC("socket %d hung up\n", client_pool->pfds[c].fd);
             } else {
               LOG_FROM_ERR("recv() failure\n");
               LOG_APPEND("errno: %s\n", errno);
@@ -181,7 +181,7 @@ int client_add(ClientPool *pool, int fd, short ev_flags) {
       pool->pfds[c].events = ev_flags;
       pool->clients[c].is_connected = true;
       pool->n_clients++;
-      LOG_FROM_STD("added client on socket descriptor: %d\n", fd);
+      LOG_FROM_SUCC("added client on socket descriptor: %d\n", fd);
       LOG_APPEND("current connected clients: %d\n", pool->n_clients);
       return fd;
     }
@@ -203,7 +203,7 @@ int client_remove(ClientPool *pool, int fd) {
       pool->clients[c].is_connected = false;
       pool->clients[c].name = NULL;
       pool->n_clients--;
-      LOG_FROM_STD("removed client on socket descriptor: %d\n", fd);
+      LOG_FROM_SUCC("removed client on socket descriptor: %d\n", fd);
       LOG_APPEND("current connected clients: %d\n", pool->n_clients);
       return fd;
     }
@@ -214,7 +214,7 @@ int client_remove(ClientPool *pool, int fd) {
 }
 
 void clients_destroy(ClientPool *pool) {
-  LOG_FROM_STD("freeing memory of ClientPool ...\n");
+  LOG_FROM_SUCC("freeing memory of ClientPool ...\n");
   free(pool->pfds);
   free(pool->clients);
   free(pool);
@@ -314,7 +314,7 @@ connect_client(ClientPool *pool, int client_fd, struct sockaddr_storage *addr)
     close(client_fd);
     return;
   }
-  LOG_FROM_STD("new connection from %s on socket %d\n",
+  LOG_FROM_SUCC("new connection from %s on socket %d\n",
               inet_ntop(addr->ss_family,
                         get_in_addr((struct sockaddr *) addr),
                         remoteIP, INET6_ADDRSTRLEN),

@@ -1,317 +1,230 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <stdbool.h>
-#include <pthread.h>
-#include <signal.h>
-#include <fcntl.h>
-#include <errno.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <poll.h>
 
-#include "db.h"
-
-#define PORT_DEFAULT 9001
-#define MAX_TXT_BUFFER 256
-
-// BEGIN: client data structure
-// In the future, a thread pool should be implemented.
-#define MAX_CLIENTS 2
-int CLIENT_COUNT = 0;
-
-typedef struct {
-  bool is_connected;
-  const char *name;
-  int id;
-  int socket;
-  pthread_t thread_id;
-} Client;
-
-Client CLIENTS[MAX_CLIENTS];
-void clients_init(void);
-void add_client(pthread_t, int);
-void remove_client(int socket);
-// END: client data structure
-
-// BEGIN: signal thread
-typedef struct {
-  sigset_t *set;
-  int *host_socket;
-} ThreadContext;
-sigset_t init_sigset(void);
-void *handle_signal_thread(void *);
-// END: signal thread
-
-/*
-Setting RUN as volatile sig_atomic_t ensures atomicity for int-sized read/write
-but does not prevent potential read-modify-write race conditions.
-For better thread synchronization, consider using mutexes or condition variables
-alongside the RUN flag.
-*/
-volatile sig_atomic_t RUN = 1;
-
-void join_all_threads(void);
-void *handle_client(void *);
-void host_panic_on_fail(bool, int, const char *);
-int resolve_client_connection(int, pthread_t *, struct sockaddr_in);
-uint16_t extract_or_default_port(int, char **);
-void server_addr_init(struct sockaddr_in *server_addr, uint16_t);
-
-const char *WELCOME_MSG = "hello, welcome fren!\n";
-const char *CONN_REFUSED = "Connection to host refused!\n";
- 
-int main(int argc, char **argv) {
-  const uint16_t PORT = extract_or_default_port(argc, argv);
-
-  int host_socket;
-  struct sockaddr_in server_addr, client_addr;
-  socklen_t client_addr_len = sizeof(client_addr);
-
-  // BEGIN: HOST SOCKET
-  host_socket = socket(AF_INET, SOCK_STREAM, 0);
-  host_panic_on_fail(host_socket < 0,
-                     host_socket,
-                     "failed to create socket.\n");
-  // TCP TIME_WAIT state may linger, this comes from TCP stack configuration
-  // of the operating system, setting SO_REUSEADDR is to mitigate busy port
-  // annoyances.
-  int optval = 1;
-  setsockopt(host_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  fcntl(host_socket, F_SETFL, O_NONBLOCK); // non-blocking socket
-  // END: HOST SOCKET
-
-  server_addr_init(&server_addr, PORT);
-
-  const int bind_result = bind(host_socket,
-                                (struct sockaddr *) &server_addr,
-                                sizeof(server_addr));
-
-  host_panic_on_fail(bind_result < 0,
-                     host_socket,
-                     "binding on socket failed.\n");
-
-  host_panic_on_fail(listen(host_socket, 5) < 0,
-                     host_socket,
-                     "failed to listen on socket.\n");
-
-  printf("Server listening on port %d...\n", PORT);
-
-  // BEGIN: logic for signal thread blocker
-  sigset_t set = init_sigset();
-  ThreadContext ctx = {
-    .set = &set,
-    .host_socket = &host_socket
-  };
-  pthread_t sig_thread = 0;
-  pthread_create(&sig_thread, NULL, handle_signal_thread, (void *) &ctx);
-  // END: logic for signal thread blocker
-
-  clients_init(); // to unconnected
-
-  while (RUN) {
-    int client_socket = accept(host_socket,
-                              (struct sockaddr *) &client_addr,
-                              &client_addr_len);
-    if (client_socket < 0) {
-      if (errno == EWOULDBLOCK || errno == EAGAIN) {
-        /*
-          This approach is functional but inefficient.
-          Consider using select(), poll(), or epoll() for a more efficient
-          wait mechanism that can handle multiple descriptors
-          (client sockets and possibly other resources) simultaneously without
-          busy waiting.
-         */
-        sleep(1);
-        continue;
-      } else if (RUN) {
-        perror("HOST :: rejected client_socket.\n");
-        continue;
-      }
-    }
-
-    pthread_t thread = 0;
-    resolve_client_connection(client_socket, &thread, client_addr);
-  }
-
-  close(host_socket);
-  join_all_threads();
-  printf("Host closed peacefully.\n");
-  return 0;
-}
-
-void host_panic_on_fail(bool cond, int host_socket, const char *msg) {
-  if (cond) {
-    perror("HOST ::");
-    fprintf(stderr, "%s(): %s", __func__, msg);
-    close(host_socket);
-    exit(EXIT_FAILURE);
-  }
-}
-
-void broadcast_message_from(int sender_socket, const char *msg) {
-  for (int i = 0; i < CLIENT_COUNT; i++) {
-    if (CLIENTS[i].socket != sender_socket) {
-      send(CLIENTS[i].socket, msg, strlen(msg), 0);
-    }
-  }
-}
-
-void join_all_threads(void) {
-  printf("%s(): cleaning up threads.\n", __func__);
-  for (int i = 0; i < CLIENT_COUNT; i++) {
-    if (pthread_cancel(CLIENTS[i].thread_id) == 0) {
-      printf("%s(): cancelling thread %d\n", __func__, i);
-      fflush(stdout);
-      pthread_join(CLIENTS[i].thread_id, NULL);
-    }
-  }
-  CLIENT_COUNT = 0;
-}
-
-int resolve_client_connection(int client_socket,
-                              pthread_t *thread,
-                              struct sockaddr_in client_addr)
-{
-  if (client_socket < 0) return -1;
-  if ((CLIENT_COUNT + 1 > MAX_CLIENTS)) {
-    printf("%s(): rejected new client, at (%d) capacity.\n",
-           __func__, MAX_CLIENTS);
-
-    send(client_socket, CONN_REFUSED, strlen(CONN_REFUSED), 0);
-    close(client_socket);
-    return -1;
-  };
-
-  int *ptr_client_socket = malloc(sizeof(int));
-  if (!ptr_client_socket) {
-    fprintf(stderr, "%s(): malloc failure.\n", __func__);
-    close(client_socket);
-    return -1;
-  }
-
-  *ptr_client_socket = client_socket;
-  if (pthread_create(thread, NULL, handle_client, ptr_client_socket) != 0) {
-    close(client_socket);
-    free(ptr_client_socket); // Cleanup on thread creation failure
-    return -1;
-  }
-
-  add_client(*thread, client_socket);
-  printf("%s(): client connected --> %s\nTotal clients: %d\n",
-         __func__, inet_ntoa(client_addr.sin_addr), CLIENT_COUNT);
-  send(client_socket, WELCOME_MSG, strlen(WELCOME_MSG), 0);
-  return 0;
-}
-
-void client_cleanup_handler(void *arg) {
-  int client_socket = *((int *) arg);
-  printf("%s(): client (%d) exiting ...\n", __func__, client_socket);
-  printf("%s(): cleaning client socket ... \n", __func__);
-  fflush(stdout);
-  close(client_socket);
-  remove_client(client_socket);
-  free(arg);
-}
-
-void *handle_client(void *arg) {
-  int *client_socket = (int *) arg;
-  pthread_cleanup_push(client_cleanup_handler, client_socket);
-
-  char buffer[MAX_TXT_BUFFER];
-  ssize_t bytes_read;
-
-  while (RUN) {
-    // should switch to select(), poll() or epoll()
-    bytes_read = recv(*client_socket, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) break;
-    buffer[bytes_read++] = '\n'; // Null-terminate the received data
-    buffer[bytes_read] = '\0'; // Null-terminate the received data
-    printf("Received: %s", buffer);
-    send(*client_socket, "msg sent", strlen("msg sent"), 0);
-    broadcast_message_from(*client_socket, buffer);
-  }
-
-  close(*client_socket);
-  pthread_cleanup_pop(1);
-  return NULL;
-}
+#include "host.h"
+#include "log.h" // LOG_IMPLEMENTION defined in main.c
 
 uint16_t extract_or_default_port(int argc, char **argv) {
   if (argc < 2) {
-    printf("WARNING: no port provided, defaulting to %d.\n", PORT_DEFAULT);
+    LOG_FROM_WARN("no port given, defaulting to %d\n", PORT_DEFAULT);
     return PORT_DEFAULT;
   }
   return (uint16_t) atoi(argv[1]);
 }
 
-void server_addr_init(struct sockaddr_in *addr, uint16_t port) {
-  memset(addr, 0, sizeof(*addr));
-  addr->sin_family      = AF_INET;
-  addr->sin_addr.s_addr = INADDR_ANY;
-  addr->sin_port        = htons(port);
+static void
+pool_malloc_guard_fatal(ClientPool *p, Client *cs, struct pollfd *ps)
+{
+  const char *restrict fmt = "null pointer allocating %s\n";
+  if (p == NULL) {
+    LOG_FROM_ERR(fmt, "(ClientPool *)");
+    exit(EXIT_FAILURE);
+  }
+  if (cs == NULL) {
+    LOG_FROM_ERR(fmt, "(Client *)");
+    exit(EXIT_FAILURE);
+  }
+  if (ps == NULL) {
+    LOG_FROM_ERR(fmt, "(struct pollfd *)");
+    exit(EXIT_FAILURE);
+  }
 }
 
-/* init_sigset does two things: it initializes a sigset_t with specific signals
-   (SIGINT and SIGTERM) and applies this set to block these signals in the
-   calling thread (and subsequently all threads created after this call due to
-   thread inheritance of signal masks). */
-sigset_t init_sigset(void) {
-  sigset_t set;
-  sigemptyset(&set);
-  sigaddset(&set, SIGINT);
-  sigaddset(&set, SIGTERM);
-  pthread_sigmask(SIG_BLOCK, &set, NULL);
-  return set;
+ClientPool *clients_init(uint8_t max) {
+  // should I simply add 1 for listener?
+  ClientPool *pool     = malloc(sizeof(ClientPool));
+  Client *clients      = malloc(max * sizeof(Client));
+  struct pollfd *pfds  = malloc(max * sizeof(struct pollfd));
+  pool_malloc_guard_fatal(pool, clients, pfds);
+
+  pool->max = max;
+  pool->n_clients = 0;
+  pool->clients = clients;
+  pool->pfds = pfds;
+
+  for (int c = 0; c < max; c ++) {
+    pool->pfds[c].fd = -1;
+    pool->pfds[c].events = 0;
+    pool->clients[c].is_connected = false;
+    pool->clients[c].name = NULL;
+    pool->clients[c].pfd = &pool->pfds[c];
+  }
+
+  return pool;
 }
 
-// Note that void pointer essentially allows the fn to be generic!
-void *handle_signal_thread(void *raw) {
-  ThreadContext *ctx = (ThreadContext *) raw;
-  int sig;
-  for (;;) {
-    sigwait(ctx->set, &sig); // wait for any signal in set
-    if (sig == SIGINT || sig == SIGTERM) {
-      printf("\nCaught interrupt signal %d\n", sig);
-      RUN = 0;
-      printf("Shutting down...\n");
-      break;
+int client_add(ClientPool *pool, int fd, short ev_flags) {
+  if (pool->n_clients >= pool->max) {
+    LOG_FROM_ERR("max clients (%d) reached, add failed\n", pool->n_clients);
+    return -1;
+  }
+  for (int c = 0; c < pool->max; c++) {
+    if (!pool->clients[c].is_connected) {
+      pool->pfds[c].fd = fd;
+      pool->pfds[c].events = ev_flags;
+      pool->clients[c].is_connected = true;
+      pool->n_clients++;
+      LOG_FROM_SUCC("added client on socket descriptor: %d\n", fd);
+      LOG_APPEND("current connected clients: %d\n", pool->n_clients);
+      return fd;
     }
   }
-  return NULL;
+  LOG_FROM_ERR("could not find a free client slot\n"); // unreachable
+  return -1;
 }
 
-void clients_init(void) {
-  size_t n = 0;
-  while (n < MAX_CLIENTS) {
-    CLIENTS[n].is_connected = false;
-    CLIENTS[n].socket = -1;
-    CLIENTS[n++].id = -1;
+int client_remove(ClientPool *pool, int fd) {
+  if (pool->n_clients == 0) {
+    LOG_FROM_ERR("no connected clients to remove\n");
+    return -1;
+  }
+  for (int c = 0; c < pool->max; c++) {
+    if (pool->pfds[c].fd == fd) {
+      pool->pfds[c].fd = -1;
+      pool->pfds[c].events = 0;
+      pool->pfds[c].revents = 0;
+      pool->clients[c].is_connected = false;
+      pool->clients[c].name = NULL;
+      pool->n_clients--;
+      LOG_FROM_SUCC("removed client on socket descriptor: %d\n", fd);
+      LOG_APPEND("current connected clients: %d\n", pool->n_clients);
+      return fd;
+    }
+  }
+  LOG_FROM_ERR("client removal failed, "
+               "socket descriptor %d not found\n", fd);
+  return -1;
+}
+
+void clients_destroy(ClientPool *pool) {
+  LOG_FROM_SUCC("freeing memory of ClientPool ...\n");
+  free(pool->pfds);
+  free(pool->clients);
+  free(pool);
+}
+
+static const char *port_to_cstr(uint16_t port) {
+  char *cstr = malloc(6); // 6 because uint16_t can be > 9999
+  sprintf(cstr, "%d", port);
+  return cstr;
+}
+
+static void addr_info_configure(struct addrinfo *config) {
+  memset(config, 0, sizeof(*config)); // zero init all fields
+  config->ai_family   = AF_UNSPEC;    // IPv4 and IPv6
+  config->ai_socktype = SOCK_STREAM;  // TCP
+  config->ai_flags    = AI_PASSIVE;   // assign addr of localhost for me
+}
+
+static void suppress_addr_in_use(int fd) {
+  const int optval = 1; // setsockopt takes void * as opt value
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+}
+
+int get_listener_socket(uint16_t port) {
+  struct addrinfo config, *addr_info;
+  addr_info_configure(&config);
+
+  int rv; // store return value of getaddrinfo
+  if ((rv = getaddrinfo(NULL, port_to_cstr(port), &config, &addr_info)) != 0)
+  {
+    LOG_FATAL("%s\n", gai_strerror(rv));
+    exit(EXIT_FAILURE);
+  }
+
+  // traverse addr_info linked list
+  int listener_fd;
+  struct addrinfo *curr = addr_info;
+  for (curr = addr_info; curr != NULL; curr = curr->ai_next) {
+    listener_fd = socket(curr->ai_family, curr->ai_socktype, curr->ai_protocol);
+    if (listener_fd < 0) continue;
+    suppress_addr_in_use(listener_fd);
+    if (bind(listener_fd, curr->ai_addr, curr->ai_addrlen) < 0) {
+      close(listener_fd);
+      continue;
+    }
+    break;
+  }
+
+  freeaddrinfo(addr_info);
+
+  if (curr == NULL) {
+    LOG_FATAL("failed to bind file descriptor\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (listen(listener_fd, 10) == -1) {
+    LOG_FATAL("failed to listen at file descriptor\n");
+    exit(EXIT_FAILURE);
+  }
+
+  return listener_fd;
+}
+
+void poll_disconnect_guard(int poll_count) {
+  switch (poll_count) {
+  case 0:
+    LOG_FATAL("polling timed out, do data for %d milliseconds\n", TIMEOUT);
+    exit(EXIT_FAILURE);
+  case -1:
+    LOG_FATAL("poll suddenly dropped out\n");
+    LOG_APPEND("errno: %s\n", strerror(errno));
+    exit(EXIT_FAILURE);
+  default: return;
   }
 }
 
-void add_client(pthread_t thread, int client_socket) {
-  CLIENTS[CLIENT_COUNT].thread_id = thread;
-  CLIENTS[CLIENT_COUNT].socket = client_socket;
-  CLIENTS[CLIENT_COUNT].id = CLIENT_COUNT;
-  CLIENTS[CLIENT_COUNT].is_connected = true;
-  CLIENT_COUNT++;
-  printf("%s(): client successfully added on socket %d.\n",
-         __func__, client_socket);
-  fflush(stdout);
+static void *get_in_addr(struct sockaddr *sa) {
+  // cast to void * to suppress annoying warning
+  return (sa->sa_family == AF_INET)
+    ? (void *) &(((struct sockaddr_in *) sa)->sin_addr)
+    : (void *) &(((struct sockaddr_in6 *) sa)->sin6_addr);
 }
 
-void remove_client(int socket) {
-  for (size_t n = 0; n < MAX_CLIENTS; n ++) {
-    if (CLIENTS[n].socket == socket) {
-      CLIENTS[n].socket = -1;
-      CLIENTS[n].id = -1;
-      CLIENTS[n].is_connected = false;
-      CLIENT_COUNT--;
-      printf("%s(): client successfully removed from socket %d.\n",
-             __func__, socket);
-      fflush(stdout);
+void
+connect_client(ClientPool *pool, int client_fd, struct sockaddr_storage *addr)
+{
+  char remoteIP[INET6_ADDRSTRLEN];
+  if (client_fd == -1) {
+    LOG_FROM_ERR("failed to accept client connection\n");
+    LOG_APPEND("errno: %s\n", strerror(errno));
+    return;
+  }
+  if (client_add(pool, client_fd, POLLIN) < 0) {
+    LOG_FROM_ERR("failed to add client, closing socket\n");
+    close(client_fd);
+    return;
+  }
+  LOG_FROM_SUCC("new connection from %s on socket %d\n",
+              inet_ntop(addr->ss_family,
+                        get_in_addr((struct sockaddr *) addr),
+                        remoteIP, INET6_ADDRSTRLEN),
+              client_fd);
+  return;
+}
+
+void disconnect_client(ClientPool *pool, int client_id) {
+  close(pool->pfds[client_id].fd);
+  client_remove(pool, pool->pfds[client_id].fd);
+}
+
+void broadcast_all(ClientPool *pool,
+                   int send_fd, int list_fd,
+                   char *msg, ssize_t msg_len)
+{
+  for (int c = 0; c < pool->n_clients; c++) {
+    int dest_fd = pool->pfds[c].fd;
+    if (dest_fd != list_fd && dest_fd != send_fd) { // exclude
+      if (send(dest_fd, msg, (size_t) msg_len, 0) == -1) {
+        LOG_FROM_ERR("send() failed\n");
+        LOG_APPEND("errno: %s\n", errno);
+      }
     }
   }
 }
