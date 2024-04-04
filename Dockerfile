@@ -1,9 +1,10 @@
 FROM gcc:latest
 
-WORKDIR /app
+WORKDIR /
 
-COPY . /app
+COPY . /
 
 RUN make all
 
-CMD ["/app/build/run"]
+# Set the command to run
+CMD ["/build/run"]

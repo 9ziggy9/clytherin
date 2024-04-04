@@ -21,13 +21,12 @@ endef
 all: clean build run
 
 run:
-	docker run --name $(IMAGE_NAME) --rm -it $(IMAGE_NAME)
+	docker run --init --name $(IMAGE_NAME) --rm -it $(IMAGE_NAME) || true
 
 build:
-	DOCKER_BUILDKIT=1 docker build -t $(IMAGE_NAME) .
+	DOCKER_BUILDKIT=0 docker build -t $(IMAGE_NAME) .
 
-# this is extremely hacky, logical or prevents errors from
-# propagating up to `make` command.
+# this is extremely hacky, logical or prevents errors from propagating
 clean:
 	- docker stop $(IMAGE_NAME) 2>/dev/null   || true
 	- docker rmi -f $(IMAGE_NAME) 2>/dev/null || true
@@ -37,6 +36,7 @@ clean:
 	@docker ps -aq
 	$(call print_in_color, $(CYAN), \nDocker images list\n)
 	@docker image ls
+	@printf "\n"
 
 
 # docker container rm $(IMAGE_NAME) -- unnecessary due to --rm in run
