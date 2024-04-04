@@ -21,10 +21,11 @@ endef
 all: clean build run
 
 run:
-	docker run --init --name $(IMAGE_NAME) --rm -it $(IMAGE_NAME) || true
+	docker run -p 9001:9001 --init --name $(IMAGE_NAME) --rm -it $(IMAGE_NAME) \
+	|| true
 
 build:
-	DOCKER_BUILDKIT=0 docker build -t $(IMAGE_NAME) .
+	DOCKER_BUILDKIT=1 docker build -t $(IMAGE_NAME) .
 
 # this is extremely hacky, logical or prevents errors from propagating
 clean:
