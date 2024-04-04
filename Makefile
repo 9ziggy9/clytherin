@@ -1,6 +1,6 @@
 # gcc is preferred but I do not explicitly set it
-CC      := cc
-CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum
+CC      := clang
+CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum -Wno-gnu
 # support from c23 -> c89
 STD     := -std=c11
 BIN_DIR := ./build
@@ -24,10 +24,11 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-# suppress GNU extension warnings for clang
-ifeq ($(CC), clang)
-	CFLAGS += -Wno-gnu
-endif
+# # why doesnt make on macOS freeBSD respect this?
+# # suppress GNU extension warnings for clang
+# ifeq ($(CC), clang)
+# 	CFLAGS += -Wno-gnu
+# endif
 
 .PHONY: run_host clean test_host
 
