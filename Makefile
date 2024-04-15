@@ -33,9 +33,13 @@ main: $(OBJ) main.c
 	$(call print_in_color, $(BLUE), \nCOMPILING main.c to EXE $(BIN_DIR)/run\n)
 	$(CC) $(CFLAGS) main.c -o $(EXE) $(OBJ)
 
-client: $(BIN_DIR) client.c
+client: $(BIN_DIR) ui.o client.c
 	$(call print_in_color, $(BLUE), \nCOMPILING client.c to $(BIN_DIR)/$@\n)
-	$(CC) $(CFLAGS) client.c -o $(BIN_DIR)/$@
+	$(CC) $(CFLAGS) client.c -o $(BIN_DIR)/$@ $(BIN_DIR)/ui.o -lncurses
+
+ui.o: $(BIN_DIR) ui.c
+	$(call print_in_color, $(BLUE), \nCOMPILING ui.c to $(BIN_DIR)/$@\n)
+	$(CC) $(CFLAGS) -c ui.c -o $(BIN_DIR)/$@ -lncurses
 
 $(BIN_DIR)/%.o: %.c
 	$(call print_in_color, $(BLUE), \nCOMPILING $< to OBJ $@\n)
