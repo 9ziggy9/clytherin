@@ -79,11 +79,11 @@ int main() {
       const char *msg_txt = handle_input(w_input);
       if (msg_txt != NULL) {
         msg_post_to_feed(w_master, msg_txt, ++msg_id);
-        /* if (fds[0].revents & POLLIN) { */
-        /*   memset(buffer, 0, BUF_SIZE); */
-        /*   if (fgets(buffer, BUF_SIZE, stdin) == NULL) break; */
-        /*   send(sockfd, buffer, strlen(buffer), 0); */
-        /* } */
+        if (fds[0].revents & POLLIN) {
+          memset(buffer, 0, BUF_SIZE);
+          if (fgets(buffer, BUF_SIZE, stdin) == NULL) break;
+          send(sockfd, buffer, strlen(buffer), 0);
+        }
         wrefresh(w_master);
       }
       destroy_input_box(w_master, &w_input);

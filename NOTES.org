@@ -1,0 +1,121 @@
+* Ncurses Application I/O Blocking Issue
+** User Question
+   I must be doing something naive here in terms of io blocking,
+   I suspect it is wgetch(), this is an ncurses application which is attempting
+   to be an interface to a TCP/IP server. Here is a snippet.
+
+   #+BEGIN_SRC c
+     while (TRUE) {
+       if (poll(fds, 2, POLL_FOREVER) < 0) EXIT_WITH(EXIT_CLIENT_POLL_ERROR);
+       if (fds[1].revents & POLLIN) {
+         memset(buffer, 0, BUF_SIZE);
+         int n = (int) recv(sockfd, buffer, BUF_SIZE - 1, 0);
+         if (n > 0) mvwprintw(w_master, 1, 1, buffer);
+         else if (n == 0) EXIT_WITH(EXIT_CLIENT_SERVER_CLOSE);
+       }
+       switch (wgetch(w_master)) {
+       case 'q': case KEY_ESC: exit(EXIT_SUCCESS);
+       case KEY_F(1): {
+         WINDOW *w_input     = create_input_box(6, 50);
+         const char *msg_txt = handle_input(w_input);
+         if (msg_txt != NULL) {
+           msg_post_to_feed(w_master, msg_txt, ++msg_id);
+           if (fds[0].revents & POLLIN) {
+             memset(buffer, 0, BUF_SIZE);
+             if (fgets(buffer, BUF_SIZE, stdin) == NULL) break;
+             send(sockfd, buffer, strlen(buffer), 0);
+           }
+           wrefresh(w_master);
+         }
+         destroy_input_box(w_master, &w_input);
+       } break;
+       default:
+         break;
+       }
+     }
+   #+END_SRC
+
+   Perhaps the only way I can really achieve this functionality is with threads?
+
+** My Response
+   The issue you're encountering with blocking I/O in your ncurses-based TCP/IP
+   client application stems from the use of wgetch(w_master). The wgetch()
+   function is a blocking call in the ncurses library, which means it will wait
+   for user input indefinitely unless input is provided. This can hinder the
+   responsiveness of your application, particularly in a networked environment
+   where you might also need to handle incoming data from a server
+   asynchronously.
+
+   Here are a few strategies to resolve the blocking issue without necessarily
+   resorting to multithreading:
+
+   *** 1. Use nodelay() or timeout()
+       You can configure ncurses to not block on wgetch() by setting the window
+       to non-blocking mode using nodelay() or setting a timeout using timeout():
+
+       - nodelay():
+         #+BEGIN_SRC c
+         nodelay(w_master, TRUE); // wgetch will return ERR if no input is available
+         #+END_SRC
+
+       - timeout():
+         #+BEGIN_SRC c
+         wtimeout(w_master, 100); // wgetch will block for at most 100 milliseconds
+         #+END_SRC
+
+       This way, wgetch() returns immediately if there's no user input,
+       allowing your loop to continue and check for network events more
+       frequently.
+
+   *** 2. Check for keyboard input using poll()
+       Modify your polling to include the file descriptor for standard input
+       (STDIN_FILENO) so you can detect when there's keyboard input available
+       before you call wgetch(). This method allows you to only call wgetch()
+       when you know there's input, avoiding the block:
+
+       #+BEGIN_SRC c
+       struct pollfd fds[3];
+       fds[0].fd = STDIN_FILENO;
+       fds[0].events = POLLIN;
+       fds[1].fd = sockfd;
+       fds[1].events = POLLIN;
+
+       while (TRUE) {
+         if (poll(fds, 2, -1) < 0) EXIT_WITH(EXIT_CLIENT_POLL_ERROR);
+
+         // Check for socket input
+         if (fds[1].revents & POLLIN) {
+           memset(buffer, 0, BUF_SIZE);
+           int n = recv(sockfd, buffer, BUF_SIZE - 1, 0);
+           if (n > 0) mvwprintw(w_master, 1, 1, buffer);
+           else if (n == 0) EXIT_WITH(EXIT_CLIENT_SERVER_CLOSE);
+         }
+
+         // Check for keyboard input
+         if (fds[0].revents & POLLIN) {
+           int ch = wgetch(w_master);
+           switch (ch) {
+           case 'q': case KEY_ESC: exit(EXIT_SUCCESS);
+           case KEY_F(1): {
+             // Handle function key press
+             // Your existing code here...
+           } break;
+           default:
+             break;
+           }
+         }
+       }
+       #+END_SRC
+
+   *** 3. Multithreading
+       If the application complexity grows or if handling UI and network
+       communication in the same loop becomes unwieldy, consider using
+       separate threads: one for handling the UI and another for
+       network communication. However, remember that managing threads
+       can introduce its own complexity in terms of synchronization
+       and data sharing.
+
+       Using either the nodelay()/timeout() approach or modifying your poll()
+       setup should resolve the blocking issue without the need for
+       multithreading. This approach keeps your application single-threaded,
+       simplifying development and debugging.
