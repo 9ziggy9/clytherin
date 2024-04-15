@@ -181,7 +181,6 @@ void poll_disconnect_guard(int poll_count) {
 }
 
 static void *get_in_addr(struct sockaddr *sa) {
-  // cast to void * to suppress annoying warning
   return (sa->sa_family == AF_INET)
     ? (void *) &(((struct sockaddr_in *) sa)->sin_addr)
     : (void *) &(((struct sockaddr_in6 *) sa)->sin6_addr);

@@ -1,6 +1,7 @@
 # gcc is preferred but I do not explicitly set it
-CC      := clang
-CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum -Wno-gnu
+CC      := gcc
+CFLAGS  := -Wall -Wextra -pedantic -Wconversion -Wunreachable-code -Wswitch-enum
+
 # support from c23 -> c89
 STD     := -std=c11
 BIN_DIR := ./build
@@ -9,13 +10,13 @@ OBJ     := $(BIN_DIR)/host.o
 EXE     := $(BIN_DIR)/run
 
 # COLOR ALIASES
-RED=\033[31m
-GREEN=\033[32m
-YELLOW=\033[33m
-BLUE=\033[34m
-MAGENTA=\033[35m
-CYAN=\033[36m
-RESET=\033[0m
+RED     = \033[31m
+GREEN   = \033[32m
+YELLOW  = \033[33m
+BLUE    = \033[34m
+MAGENTA = \033[35m
+CYAN    = \033[36m
+RESET   = \033[0m
 
 # colored output function
 define print_in_color
@@ -24,27 +25,17 @@ define print_in_color
 	@printf "\033[0m"
 endef
 
-# # why doesnt make on macOS freeBSD respect this?
-# # suppress GNU extension warnings for clang
-# ifeq ($(CC), clang)
-# 	CFLAGS += -Wno-gnu
-# endif
-
-.PHONY: run_host clean test_host
+.PHONY: clean all
 
 all: clean $(OBJ) main
 
-test_host: clean $(OBJ) main.c
-	$(call print_in_color, $(BLUE), \nCOMPILING main.c to EXE $(BIN_DIR)/run\n)
-	$(CC) $(CLFLAGS) main.c -o $(EXE) $(OBJ) -DTEST__
-	$(EXE)
-
-run_host:
-	$(EXE)
-
 main: $(OBJ) main.c
 	$(call print_in_color, $(BLUE), \nCOMPILING main.c to EXE $(BIN_DIR)/run\n)
-	$(CC) $(CLFLAGS) main.c -o $(EXE) $(OBJ)
+	$(CC) $(CFLAGS) main.c -o $(EXE) $(OBJ)
+
+client: $(BIN_DIR) client.c
+	$(call print_in_color, $(BLUE), \nCOMPILING client.c to $(BIN_DIR)/$@\n)
+	$(CC) $(CFLAGS) client.c -o $(BIN_DIR)/$@
 
 $(BIN_DIR)/%.o: %.c
 	$(call print_in_color, $(BLUE), \nCOMPILING $< to OBJ $@\n)

@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
           struct sockaddr_storage client_addr;
           socklen_t client_addr_len = sizeof(client_addr);
           int new_client_fd = accept(listener, (struct sockaddr *) &client_addr,
-                                    &client_addr_len);
+                                     &client_addr_len);
           connect_client(client_pool, new_client_fd, &client_addr);
         } else { // client routines
           ssize_t num_bytes = recv(client_pool->pfds[c].fd,
